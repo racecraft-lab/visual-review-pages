@@ -5,6 +5,7 @@ import {
   annotationCommentBody,
   annotationPageHref,
   annotationStorageKey,
+  annotationPointIntersectsImage,
   imageCoordinatesFromAnnotation,
   resolvePullRequestCommentPlacement,
 } from '../src/visual-review-annotations.mjs'
@@ -59,22 +60,83 @@ test('annotation page URLs stay inside the deployed report directory', () => {
   )
 })
 
-test('image coordinates are stored as natural pixels and percentages', () => {
+test('image coordinates are stored from the Agentation anchor as natural pixels and percentages', () => {
   const coords = imageCoordinatesFromAnnotation({
     annotation: {
-      boundingBox: { height: 100, width: 200, x: 500, y: 300 },
+      boundingBox: { height: 400, width: 800, x: 100, y: 100 },
       comment: 'Copy clips here',
       id: 'ann-1',
+      x: 62.5,
+      y: 350,
     },
     imageRect: { height: 400, width: 800, x: 100, y: 100 },
     naturalSize: { height: 800, width: 1600 },
+    viewport: { scrollY: 0, width: 960 },
   })
 
   assert.equal(coords.pixelX, 1000)
   assert.equal(coords.pixelY, 500)
   assert.equal(coords.xPct, 62.5)
   assert.equal(coords.yPct, 62.5)
-  assert.deepEqual(coords.boxPct, { height: 25, width: 25, x: 50, y: 50 })
+  assert.deepEqual(coords.boxPct, { height: 100, width: 100, x: 0, y: 0 })
+})
+
+test('image coordinates stay stable across zoom and pan for the same image point', () => {
+  const naturalSize = { height: 800, width: 1600 }
+  const viewport = { scrollY: 300, width: 1200 }
+
+  const zoomedOut = imageCoordinatesFromAnnotation({
+    annotation: {
+      id: 'zoom-50',
+      x: (300 / viewport.width) * 100,
+      y: 220 + viewport.scrollY,
+    },
+    imageRect: { height: 400, width: 800, x: 100, y: 20 },
+    naturalSize,
+    viewport,
+  })
+
+  const zoomedInAndPanned = imageCoordinatesFromAnnotation({
+    annotation: {
+      id: 'zoom-200',
+      x: (300 / viewport.width) * 100,
+      y: 220 + viewport.scrollY,
+    },
+    imageRect: { height: 1600, width: 3200, x: -500, y: -580 },
+    naturalSize,
+    viewport,
+  })
+
+  assert.deepEqual(
+    {
+      pixelX: zoomedInAndPanned.pixelX,
+      pixelY: zoomedInAndPanned.pixelY,
+      xPct: zoomedInAndPanned.xPct,
+      yPct: zoomedInAndPanned.yPct,
+    },
+    {
+      pixelX: zoomedOut.pixelX,
+      pixelY: zoomedOut.pixelY,
+      xPct: zoomedOut.xPct,
+      yPct: zoomedOut.yPct,
+    }
+  )
+})
+
+test('outside-image annotation points are rejected instead of clamped to an edge', () => {
+  const args = {
+    annotation: {
+      id: 'outside',
+      x: 95,
+      y: 120,
+    },
+    imageRect: { height: 400, width: 800, x: 100, y: 100 },
+    naturalSize: { height: 800, width: 1600 },
+    viewport: { scrollY: 0, width: 1000 },
+  }
+
+  assert.equal(annotationPointIntersectsImage(args), false)
+  assert.throws(() => imageCoordinatesFromAnnotation(args), /outside the reviewed image/)
 })
 
 test('PR placement prefers exact right-side diff lines', () => {

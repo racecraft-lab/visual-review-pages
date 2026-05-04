@@ -4,12 +4,14 @@ import { Agentation } from 'agentation'
 
 import {
   annotationCommentBody,
+  annotationPointIntersectsImage,
   annotationStorageKey,
   imageCoordinatesFromAnnotation,
   resolvePullRequestCommentPlacement,
 } from './visual-review-annotations.mjs'
 
 const root = document.getElementById('visual-annotation-root')
+installAgentationImageBoundsGuard()
 
 if (root) {
   createRoot(root).render(<AnnotationApp />)
@@ -23,6 +25,7 @@ function AnnotationApp() {
   const [githubUser, setGithubUser] = useState('')
   const [tokenStatus, setTokenStatus] = useState('Token optional')
   const [annotations, setAnnotations] = useState([])
+  const [boundsStatus, setBoundsStatus] = useState('')
   const [posting, setPosting] = useState(false)
   const [postStatus, setPostStatus] = useState('')
   const [prFiles, setPrFiles] = useState(null)
@@ -56,8 +59,17 @@ function AnnotationApp() {
   useEffect(() => {
     if (!storageKey) return
     setAnnotations(readAnnotations(storageKey))
+    setBoundsStatus('')
     setPostStatus('')
   }, [storageKey])
+
+  useEffect(() => {
+    const handleBlockedAnnotation = () => {
+      setBoundsStatus('Annotation ignored. Click directly inside the reviewed image.')
+    }
+    window.addEventListener('visual-review-annotation-blocked', handleBlockedAnnotation)
+    return () => window.removeEventListener('visual-review-annotation-blocked', handleBlockedAnnotation)
+  }, [])
 
   useEffect(() => {
     if (selectedAsset && selectedAsset.kind !== asset) setAsset(selectedAsset.kind)
@@ -75,11 +87,21 @@ function AnnotationApp() {
       width: imageRef.current.naturalWidth || imageRect.width,
       height: imageRef.current.naturalHeight || imageRect.height,
     }
+    const viewport = {
+      scrollY: window.scrollY,
+      width: window.innerWidth,
+    }
+    if (!annotationPointIntersectsImage({ annotation: agentationAnnotation, imageRect, viewport })) {
+      setBoundsStatus('Annotation ignored. Click directly inside the reviewed image.')
+      return
+    }
     const coordinates = imageCoordinatesFromAnnotation({
       annotation: agentationAnnotation,
       imageRect,
       naturalSize,
+      viewport,
     })
+    setBoundsStatus('')
     const wrapped = {
       schemaVersion: 1,
       id: agentationAnnotation.id,
@@ -92,7 +114,7 @@ function AnnotationApp() {
         naturalWidth: naturalSize.width,
         rawFile: item.raw,
         url: selectedAsset.url,
-        valid: pointIntersectsImage(agentationAnnotation, imageRect),
+        valid: true,
       },
       review: {
         annotationPageUrl: window.location.href,
@@ -296,13 +318,30 @@ function AnnotationApp() {
             </div>
             <div className="stage annotation-stage">
               <div className="stage-inner annotation-stage-inner" style={{ zoom: zoom / 100 }}>
-                <img
-                  alt={`${selectedAsset.label} for ${item.raw}`}
-                  className="solo-image annotation-image-target"
-                  data-annotation-image
-                  ref={imageRef}
-                  src={selectedAsset.url}
-                />
+                <div className="annotation-image-frame" data-annotation-frame>
+                  <img
+                    alt={`${selectedAsset.label} for ${item.raw}`}
+                    className="solo-image annotation-image-target"
+                    data-annotation-image
+                    ref={imageRef}
+                    src={selectedAsset.url}
+                  />
+                  <div className="annotation-image-marker-layer" aria-hidden="true">
+                    {annotations.map((annotation, index) => (
+                      <span
+                        className={`annotation-image-marker ${annotation.github?.status || 'pending'}`}
+                        key={annotation.id}
+                        style={{
+                          left: cssPercent(annotation.image?.xPct),
+                          top: cssPercent(annotation.image?.yPct),
+                        }}
+                        title={annotation.comment || 'Image annotation'}
+                      >
+                        {index + 1}
+                      </span>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </article>
@@ -331,6 +370,7 @@ function AnnotationApp() {
                 <li><span>3</span><p><strong>Post to PR</strong> to leave durable reviewer context.</p></li>
               </ol>
             )}
+            {boundsStatus ? <p className="comment-status error">{boundsStatus}</p> : null}
           </section>
 
           <section className="annotation-card">
@@ -344,7 +384,7 @@ function AnnotationApp() {
                     <div>
                       <strong>{annotation.comment || 'Annotation without comment'}</strong>
                       <p>
-                        {annotation.image.valid ? 'Image coordinate' : 'Outside image'}: {annotation.image.pixelX}, {annotation.image.pixelY} px ({formatPercent(annotation.image.xPct)}%, {formatPercent(annotation.image.yPct)}%)
+                        Image coordinate: {annotation.image.pixelX}, {annotation.image.pixelY} px ({formatPercent(annotation.image.xPct)}%, {formatPercent(annotation.image.yPct)}%)
                       </p>
                       {annotation.github?.htmlUrl ? <a href={annotation.github.htmlUrl} target="_blank" rel="noopener noreferrer">Open PR comment</a> : null}
                     </div>
@@ -534,7 +574,9 @@ async function githubRequest(path, { body, context, method = 'GET', token }) {
 function readAnnotations(storageKey) {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey) || '[]')
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed)
+      ? parsed.filter((annotation) => annotation?.image?.valid !== false)
+      : []
   } catch {
     return []
   }
@@ -544,22 +586,6 @@ function upsertAnnotation(annotations, annotation) {
   const index = annotations.findIndex((candidate) => candidate.id === annotation.id)
   if (index < 0) return [...annotations, annotation]
   return annotations.map((candidate, candidateIndex) => candidateIndex === index ? annotation : candidate)
-}
-
-function pointIntersectsImage(annotation, imageRect) {
-  const point = annotation.boundingBox
-    ? {
-        x: annotation.boundingBox.x + (annotation.boundingBox.width / 2),
-        y: annotation.boundingBox.y + (annotation.boundingBox.height / 2),
-      }
-    : {
-        x: Number(annotation.x || 0),
-        y: Number(annotation.y || 0),
-      }
-  return point.x >= imageRect.x &&
-    point.x <= imageRect.x + imageRect.width &&
-    point.y >= imageRect.y &&
-    point.y <= imageRect.y + imageRect.height
 }
 
 function reviewPageHref(item) {
@@ -657,6 +683,66 @@ function formatPercent(value) {
     maximumFractionDigits: 3,
     useGrouping: false,
   })
+}
+
+function cssPercent(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '0%'
+  return `${Math.max(0, Math.min(100, numeric))}%`
+}
+
+function installAgentationImageBoundsGuard() {
+  if (typeof window === 'undefined' || window.__visualReviewImageBoundsGuardInstalled) return
+  window.__visualReviewImageBoundsGuardInstalled = true
+
+  const guard = (event) => {
+    if (!document.getElementById('feedback-cursor-styles')) return
+    if (event.defaultPrevented || isAgentationControlEvent(event)) return
+
+    const image = document.querySelector('[data-annotation-image]')
+    if (!image) return
+
+    const rect = image.getBoundingClientRect()
+    const pointInsideImage = event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom
+    const targetIsImage = eventPath(event).some((entry) => {
+      if (!entry || entry.nodeType !== 1 || typeof entry.matches !== 'function') return false
+      return entry.matches('[data-annotation-image], [data-annotation-image] *')
+    })
+
+    if (pointInsideImage && targetIsImage) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation()
+    window.dispatchEvent(new CustomEvent('visual-review-annotation-blocked', {
+      detail: { reason: 'outside-image' },
+    }))
+  }
+
+  document.addEventListener('pointerdown', guard, true)
+  document.addEventListener('mousedown', guard, true)
+  document.addEventListener('click', guard, true)
+}
+
+function isAgentationControlEvent(event) {
+  return eventPath(event).some((entry) => {
+    if (!entry || entry.nodeType !== 1 || typeof entry.matches !== 'function') return false
+    return entry.matches('[data-agentation-toolbar], [data-agentation-toolbar] *, [data-annotation-popup], [data-annotation-popup] *, [data-annotation-marker], [data-annotation-marker] *')
+  })
+}
+
+function eventPath(event) {
+  if (typeof event.composedPath === 'function') return event.composedPath()
+  const path = []
+  let current = event.target
+  while (current) {
+    path.push(current)
+    current = current.parentNode
+  }
+  return path
 }
 
 function useDesktopQuery() {

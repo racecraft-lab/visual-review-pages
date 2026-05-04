@@ -57,6 +57,11 @@ tag.
 the current report directory. It falls back to parsing `reg-viz.html` only when
 the review-data script is unavailable.
 
+The annotation page treats the reviewed image as the only valid annotation
+surface. Agentation events outside the image are ignored, and saved coordinates
+are normalized against the image's natural pixel dimensions instead of the
+current viewport. Producers do not need to provide extra pan or zoom metadata.
+
 ## Context Shape
 
 Required fields:

@@ -29,6 +29,9 @@ Agentation is distributed as a React component.
 - Image annotation page for current/baseline/diff assets. Reviewers can open a
   screenshot, mark it with Agentation, and post GitHub PR comments that include
   image links, source links, and image coordinates for follow-up agents.
+- Image annotations are bounded to the reviewed image. The app rejects clicks
+  outside the image and stores coordinates in the image's natural pixel space,
+  so markers stay attached to the same point while reviewers zoom or pan.
 
 Review marks are stored in browser `localStorage` under a key that includes the
 head SHA so stale approvals do not carry into a new commit. GitHub tokens are
