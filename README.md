@@ -21,8 +21,9 @@ CI publisher can copy `src/visual-review-app.css`, `src/visual-review-app.js`,
   story IDs.
 - Local approve/reject marks with JSON import/export and a copyable PR review
   summary.
-- Optional GitHub token flow for publishing shared PR review state and commit
-  status updates from the static page.
+- Optional GitHub token flow with a prefilled GitHub token-creation link for
+  publishing shared PR review state and commit status updates from the static
+  page.
 - Links back to the raw reg-viz report, workflow run, and pull request.
 
 Review marks are stored in browser `localStorage` under a key that includes the
