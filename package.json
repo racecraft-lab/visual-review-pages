@@ -4,7 +4,6 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "check": "node --check src/visual-review-app.js"
+    "check": "node --check src/visual-review-app.js && node --check src/visual-review-state.mjs"
   }
 }
-
