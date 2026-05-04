@@ -84,7 +84,9 @@ read from `failedItems`; new snapshots from `newItems`; removed snapshots from
 
 Items may include a producer-supplied `review` object. The app treats this as
 reviewer-facing metadata and uses it for display labels, filtering, search, and
-the reviewer context card.
+the sticky reviewer brief beside the screenshot canvas. Producers should keep
+`title`, `description`, `focus`, `sourceFile`, and story/test identifiers
+readable because those fields are the primary reviewer orientation surface.
 
 ```json
 {
