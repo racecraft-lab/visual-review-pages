@@ -25,6 +25,8 @@ function AnnotationApp() {
   const [githubUser, setGithubUser] = useState('')
   const [tokenStatus, setTokenStatus] = useState('Token optional')
   const [annotations, setAnnotations] = useState([])
+  const [editingAnnotationId, setEditingAnnotationId] = useState('')
+  const [editingComment, setEditingComment] = useState('')
   const [boundsStatus, setBoundsStatus] = useState('')
   const [posting, setPosting] = useState(false)
   const [postStatus, setPostStatus] = useState('')
@@ -59,6 +61,8 @@ function AnnotationApp() {
   useEffect(() => {
     if (!storageKey) return
     setAnnotations(readAnnotations(storageKey))
+    setEditingAnnotationId('')
+    setEditingComment('')
     setBoundsStatus('')
     setPostStatus('')
   }, [storageKey])
@@ -74,6 +78,26 @@ function AnnotationApp() {
   useEffect(() => {
     if (selectedAsset && selectedAsset.kind !== asset) setAsset(selectedAsset.kind)
   }, [asset, selectedAsset])
+
+  useEffect(() => {
+    const handleAnnotationHotkey = (event) => {
+      if (event.__visualReviewAnnotationHotkeyHandled) return
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+      if (String(event.key || '').toLowerCase() !== 'a') return
+      if (isTextEntryTarget(event.target)) return
+
+      event.__visualReviewAnnotationHotkeyHandled = true
+      event.preventDefault()
+      toggleAgentationFeedbackMode()
+    }
+
+    window.addEventListener('keydown', handleAnnotationHotkey, true)
+    document.addEventListener('keydown', handleAnnotationHotkey, true)
+    return () => {
+      window.removeEventListener('keydown', handleAnnotationHotkey, true)
+      document.removeEventListener('keydown', handleAnnotationHotkey, true)
+    }
+  }, [])
 
   const persistAnnotations = useCallback((nextAnnotations) => {
     setAnnotations(nextAnnotations)
@@ -142,15 +166,60 @@ function AnnotationApp() {
           },
     }
     persistAnnotations(upsertAnnotation(annotations, wrapped))
+    window.setTimeout(deactivateAgentationFeedbackMode, 0)
   }, [annotations, context, item, persistAnnotations, selectedAsset, target])
 
+  const startAnnotationEdit = useCallback((annotation) => {
+    setEditingAnnotationId(annotation.id)
+    setEditingComment(annotation.comment || '')
+  }, [])
+
+  const cancelAnnotationEdit = useCallback(() => {
+    setEditingAnnotationId('')
+    setEditingComment('')
+  }, [])
+
+  const saveAnnotationEdit = useCallback((annotationId) => {
+    const nextComment = editingComment.trim()
+    const nextAnnotations = annotations.map((annotation) => {
+      if (annotation.id !== annotationId) return annotation
+      return {
+        ...annotation,
+        agentation: {
+          ...annotation.agentation,
+          comment: nextComment,
+        },
+        comment: nextComment,
+        github: annotation.github?.status === 'posted'
+          ? { status: 'pending' }
+          : annotation.github,
+      }
+    })
+    persistAnnotations(nextAnnotations)
+    cancelAnnotationEdit()
+    setPostStatus('')
+  }, [annotations, cancelAnnotationEdit, editingComment, persistAnnotations])
+
+  const removeAnnotationDraft = useCallback((annotationId) => {
+    persistAnnotations(annotations.filter((annotation) => annotation.id !== annotationId))
+    if (editingAnnotationId === annotationId) cancelAnnotationEdit()
+    setPostStatus('')
+  }, [annotations, cancelAnnotationEdit, editingAnnotationId, persistAnnotations])
+
+  const clearAnnotationDrafts = useCallback(() => {
+    persistAnnotations([])
+    cancelAnnotationEdit()
+    setBoundsStatus('')
+    setPostStatus('')
+  }, [cancelAnnotationEdit, persistAnnotations])
+
   const handleAnnotationDelete = useCallback((agentationAnnotation) => {
-    persistAnnotations(annotations.filter((annotation) => annotation.id !== agentationAnnotation.id))
-  }, [annotations, persistAnnotations])
+    removeAnnotationDraft(agentationAnnotation.id)
+  }, [removeAnnotationDraft])
 
   const handleAnnotationsClear = useCallback(() => {
-    persistAnnotations([])
-  }, [persistAnnotations])
+    clearAnnotationDrafts()
+  }, [clearAnnotationDrafts])
 
   async function saveGithubToken() {
     const nextToken = token.trim()
@@ -273,7 +342,13 @@ function AnnotationApp() {
               <span>Commit {shortSha(context.headSha)}</span>
             </div>
           </div>
-          <div className="annotation-actions">
+          <div
+            className="annotation-actions"
+            data-annotation-control
+            onClick={stopAnnotationControlEvent}
+            onMouseDown={stopAnnotationControlEvent}
+            onPointerDown={stopAnnotationControlEvent}
+          >
             <a className="btn" href={reviewPageHref(item)}>Back to queue</a>
             <a className="btn" href={selectedAsset.url} target="_blank" rel="noopener noreferrer">Open raw image</a>
           </div>
@@ -347,7 +422,14 @@ function AnnotationApp() {
           </article>
         </section>
 
-        <aside className="annotation-review-panel" aria-label="Image annotation workflow">
+        <aside
+          aria-label="Image annotation workflow"
+          className="annotation-review-panel"
+          data-annotation-control
+          onClick={stopAnnotationControlEvent}
+          onMouseDown={stopAnnotationControlEvent}
+          onPointerDown={stopAnnotationControlEvent}
+        >
           <section className="annotation-card">
             <div className="brief-topline">
               <span>Image annotations</span>
@@ -365,30 +447,64 @@ function AnnotationApp() {
               </div>
             ) : (
               <ol className="sync-steps annotation-steps">
-                <li><span>1</span><p><strong>Activate Agentation</strong> from the floating toolbar.</p></li>
+                <li><span>1</span><p><strong>Activate Agentation</strong> from the floating toolbar or press <kbd>A</kbd>.</p></li>
                 <li><span>2</span><p><strong>Mark the image</strong> and describe what needs to change.</p></li>
-                <li><span>3</span><p><strong>Post to PR</strong> to leave durable reviewer context.</p></li>
+                <li><span>3</span><p><strong>Review drafts</strong> below. Edit, remove, or clear them before posting.</p></li>
+                <li><span>4</span><p><strong>Post to PR</strong> to leave durable reviewer context.</p></li>
               </ol>
             )}
             {boundsStatus ? <p className="comment-status error">{boundsStatus}</p> : null}
           </section>
 
           <section className="annotation-card">
-            <h3>Pending annotation comments</h3>
+            <div className="annotation-section-header">
+              <h3>Pending annotation comments</h3>
+              {annotations.length > 0 ? (
+                <button className="btn" onClick={clearAnnotationDrafts} type="button">Clear all annotations</button>
+              ) : null}
+            </div>
             {annotations.length === 0 ? (
               <p className="annotation-muted">No annotations saved for this image yet.</p>
             ) : (
               <div className="annotation-list">
-                {annotations.map((annotation) => (
+                {annotations.map((annotation, index) => (
                   <article className={`annotation-note ${annotation.github?.status || 'pending'}`} key={annotation.id}>
-                    <div>
-                      <strong>{annotation.comment || 'Annotation without comment'}</strong>
-                      <p>
-                        Image coordinate: {annotation.image.pixelX}, {annotation.image.pixelY} px ({formatPercent(annotation.image.xPct)}%, {formatPercent(annotation.image.yPct)}%)
-                      </p>
-                      {annotation.github?.htmlUrl ? <a href={annotation.github.htmlUrl} target="_blank" rel="noopener noreferrer">Open PR comment</a> : null}
+                    <div className="annotation-note-main">
+                      {editingAnnotationId === annotation.id ? (
+                        <label className="annotation-edit-form">
+                          <span>Edit annotation {index + 1}</span>
+                          <textarea
+                            aria-label={`Edit annotation comment ${index + 1}`}
+                            className="annotation-edit-field"
+                            onChange={(event) => setEditingComment(event.target.value)}
+                            rows="3"
+                            value={editingComment}
+                          />
+                        </label>
+                      ) : (
+                        <>
+                          <strong>{annotation.comment || 'Annotation without comment'}</strong>
+                          <p>
+                            Image coordinate: {annotation.image.pixelX}, {annotation.image.pixelY} px ({formatPercent(annotation.image.xPct)}%, {formatPercent(annotation.image.yPct)}%)
+                          </p>
+                          {annotation.github?.htmlUrl ? <a href={annotation.github.htmlUrl} target="_blank" rel="noopener noreferrer">Open PR comment</a> : null}
+                        </>
+                      )}
                     </div>
-                    <span>{annotation.github?.status || 'pending'}</span>
+                    <div className="annotation-note-side">
+                      <span>{annotation.github?.status || 'pending'}</span>
+                      {editingAnnotationId === annotation.id ? (
+                        <div className="annotation-note-actions">
+                          <button className="btn primary" onClick={() => saveAnnotationEdit(annotation.id)} type="button">Save annotation {index + 1}</button>
+                          <button className="btn" onClick={cancelAnnotationEdit} type="button">Cancel edit annotation {index + 1}</button>
+                        </div>
+                      ) : (
+                        <div className="annotation-note-actions">
+                          <button className="btn" onClick={() => startAnnotationEdit(annotation)} type="button">Edit annotation {index + 1}</button>
+                          <button className="btn" onClick={() => removeAnnotationDraft(annotation.id)} type="button">Remove annotation {index + 1}</button>
+                        </div>
+                      )}
+                    </div>
                   </article>
                 ))}
               </div>
@@ -691,6 +807,82 @@ function cssPercent(value) {
   return `${Math.max(0, Math.min(100, numeric))}%`
 }
 
+function toggleAgentationFeedbackMode() {
+  if (isAgentationFeedbackModeActive()) {
+    deactivateAgentationFeedbackMode()
+    return
+  }
+
+  activateAgentationFeedbackMode()
+}
+
+function activateAgentationFeedbackMode(attempt = 0) {
+  if (attempt === 0) {
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyF',
+      ctrlKey: true,
+      key: 'f',
+      shiftKey: true,
+    }))
+  }
+
+  if (attempt < 12) {
+    window.setTimeout(() => {
+      if (document.getElementById('feedback-cursor-styles')) return
+
+      const startButton = document.querySelector('[title="Start feedback mode"]')
+      if (startButton && typeof startButton.click === 'function') {
+        startButton.click()
+        return
+      }
+
+      activateAgentationFeedbackMode(attempt + 1)
+    }, attempt === 0 ? 100 : 50)
+    return
+  }
+}
+
+function deactivateAgentationFeedbackMode(attempt = 0) {
+  if (!isAgentationFeedbackModeActive()) return
+
+  document.dispatchEvent(new KeyboardEvent('keydown', {
+    bubbles: true,
+    cancelable: true,
+    code: 'KeyF',
+    ctrlKey: true,
+    key: 'f',
+    shiftKey: true,
+  }))
+
+  if (attempt < 5) {
+    window.setTimeout(() => deactivateAgentationFeedbackMode(attempt + 1), 100)
+  }
+}
+
+function isAgentationFeedbackModeActive() {
+  if (document.getElementById('feedback-cursor-styles')) return true
+  const toolbar = document.querySelector('[data-agentation-toolbar]')
+  const startButton = document.querySelector('[title="Start feedback mode"]')
+  return Boolean(toolbar && !startButton)
+}
+
+function stopAnnotationControlEvent(event) {
+  event.stopPropagation()
+}
+
+function isTextEntryTarget(target) {
+  if (!target || target.nodeType !== 1) return false
+  const element = target
+  const tagName = element.tagName
+  return tagName === 'INPUT' ||
+    tagName === 'TEXTAREA' ||
+    tagName === 'SELECT' ||
+    element.isContentEditable ||
+    Boolean(element.closest?.('[contenteditable="true"]'))
+}
+
 function installAgentationImageBoundsGuard() {
   if (typeof window === 'undefined' || window.__visualReviewImageBoundsGuardInstalled) return
   window.__visualReviewImageBoundsGuardInstalled = true
@@ -707,12 +899,8 @@ function installAgentationImageBoundsGuard() {
       event.clientX <= rect.right &&
       event.clientY >= rect.top &&
       event.clientY <= rect.bottom
-    const targetIsImage = eventPath(event).some((entry) => {
-      if (!entry || entry.nodeType !== 1 || typeof entry.matches !== 'function') return false
-      return entry.matches('[data-annotation-image], [data-annotation-image] *')
-    })
 
-    if (pointInsideImage && targetIsImage) return
+    if (pointInsideImage) return
 
     event.preventDefault()
     event.stopPropagation()
@@ -721,16 +909,22 @@ function installAgentationImageBoundsGuard() {
       detail: { reason: 'outside-image' },
     }))
   }
-
   document.addEventListener('pointerdown', guard, true)
   document.addEventListener('mousedown', guard, true)
   document.addEventListener('click', guard, true)
 }
 
 function isAgentationControlEvent(event) {
-  return eventPath(event).some((entry) => {
+  return isAnnotationControlEvent(event) || eventPath(event).some((entry) => {
     if (!entry || entry.nodeType !== 1 || typeof entry.matches !== 'function') return false
     return entry.matches('[data-agentation-toolbar], [data-agentation-toolbar] *, [data-annotation-popup], [data-annotation-popup] *, [data-annotation-marker], [data-annotation-marker] *')
+  })
+}
+
+function isAnnotationControlEvent(event) {
+  return eventPath(event).some((entry) => {
+    if (!entry || entry.nodeType !== 1 || typeof entry.matches !== 'function') return false
+    return entry.matches('[data-annotation-control], [data-annotation-control] *')
   })
 }
 
