@@ -4,6 +4,16 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "check": "node --check src/visual-review-app.js && node --check src/visual-review-state.mjs"
+    "build": "vite build",
+    "check": "npm run build && node --check src/visual-review-app.js && node --check src/visual-review-state.mjs && node --check src/visual-review-annotations.mjs && node --test"
+  },
+  "dependencies": {
+    "agentation": "^3.0.2",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.1",
+    "vite": "^8.0.10"
   }
 }

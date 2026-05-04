@@ -1,24 +1,32 @@
 # Producer Contract
 
 The app needs one HTML file, three static assets, and the image tree generated
-by reg-viz/reg-actions.
+by reg-viz/reg-actions. If image annotations are enabled, include the annotation
+HTML shell, bundled annotation script, helper module, and bundled dependency
+license notice as well.
 
 ## Directory Layout
 
 ```text
 <report-dir>/
   index.html
+  annotate.html
   reg-viz.html
   visual-review-app.css
   visual-review-app.js
+  visual-review-annotations.mjs
   visual-review-state.mjs
+  visual-annotation-app.js
+  third-party/
+    agentation-LICENSE.txt
   __reg__/
     0_diff/
     1_actual/
     2_expected/
 ```
 
-`index.html` is the visual review app. `reg-viz.html` is the raw fallback
+`index.html` is the visual review queue app. `annotate.html` is the
+Agentation-powered image annotation app. `reg-viz.html` is the raw fallback
 report. The `__reg__` directory must preserve the original screenshot file
 names referenced by the reg-viz payload.
 
@@ -35,6 +43,19 @@ names referenced by the reg-viz payload.
 
 Escape `<`, `>`, and `&` in the inline JSON before writing it into the script
 tag.
+
+## Annotation Shell
+
+```html
+<link rel="stylesheet" href="./visual-review-app.css" />
+<div id="visual-annotation-root"></div>
+<script src="./visual-annotation-app.js" type="module"></script>
+```
+
+`annotate.html` can be deployed without inline JSON. It fetches the sibling
+`index.html`, reads `#visual-review-data`, and resolves image URLs relative to
+the current report directory. It falls back to parsing `reg-viz.html` only when
+the review-data script is unavailable.
 
 ## Context Shape
 
@@ -60,6 +81,11 @@ Required fields:
 ```
 
 Optional fields can be included by producers and ignored by the current app.
+
+The annotation workflow derives all GitHub API targets from this context. Never
+hardcode repository, PR number, surface, run key, or head SHA in a deployed
+bundle; those values must come from the report context so multiple PRs can be
+reviewed at the same time.
 
 ## Payload Shape
 
@@ -139,3 +165,12 @@ metadata into the same `review` object:
   }
 }
 ```
+
+## Multi-PR State Isolation
+
+Browser state is scoped by repository, PR number, surface, run key, head SHA,
+snapshot ID, and asset type. Producers must keep those context fields accurate
+for every report directory. This is what keeps paths such as
+`/mission-control/pr/26/playwright/latest/` and
+`/mission-control/pr/27/playwright/latest/` independent when opened in separate
+tabs.

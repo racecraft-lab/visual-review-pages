@@ -4,9 +4,10 @@ Static visual review app for reg-viz/reg-actions screenshot reports.
 
 This repository is the reusable source for the GitHub Pages review UI used by
 Mission Control PR visual reports. The app is intentionally framework-free so a
-CI publisher can copy `src/visual-review-app.css`, `src/visual-review-app.js`,
-`src/visual-review-state.mjs`, an `index.html` shell, and the report-local
-`__reg__` image tree into any Pages directory.
+CI publisher can copy the review assets, an `index.html` shell, and the
+report-local `__reg__` image tree into any Pages directory. The queue app stays
+framework-free. The image annotation page uses a prebuilt React bundle because
+Agentation is distributed as a React component.
 
 ## Reviewer Features
 
@@ -25,6 +26,9 @@ CI publisher can copy `src/visual-review-app.css`, `src/visual-review-app.js`,
   publishing shared PR review state and commit status updates from the static
   page.
 - Links back to the raw reg-viz report, workflow run, and pull request.
+- Image annotation page for current/baseline/diff assets. Reviewers can open a
+  screenshot, mark it with Agentation, and post GitHub PR comments that include
+  image links, source links, and image coordinates for follow-up agents.
 
 Review marks are stored in browser `localStorage` under a key that includes the
 head SHA so stale approvals do not carry into a new commit. GitHub tokens are
@@ -33,6 +37,15 @@ publish the shared visual review state into a managed PR comment so reviewers
 can continue the same approval/reject flow across browsers. Loading shared PR
 state replaces local decisions for the current surface, which lets a reset PR
 comment clear stale local approvals.
+
+Annotation drafts are also stored in browser `localStorage`, scoped by
+repository, PR number, visual surface, run key, head SHA, snapshot ID, and asset
+type. This lets multiple PRs and surfaces stay open in separate tabs without
+state bleed. GitHub tokens remain tab-scoped in `sessionStorage`.
+
+Agentation is bundled under the PolyForm Shield 1.0.0 license. Keep
+`third-party/agentation-LICENSE.txt` with any deployed bundle that includes
+`dist/visual-annotation-app.js`.
 
 ## Producer Contract
 
@@ -44,3 +57,5 @@ file layout.
 ```bash
 npm run check
 ```
+
+`npm run check` builds the annotation bundle and runs syntax plus unit tests.
