@@ -33,6 +33,27 @@ function payload(fileName = snapshot) {
   }
 }
 
+function payloadForTestIdentity({
+  fileName = snapshot,
+  sourceFile = 'tests/e2e/settings.spec.ts',
+  titlePath = ['settings.spec.ts', 'Settings panel', 'shows defaults'],
+} = {}) {
+  return {
+    ...payload(fileName),
+    newItems: [{
+      raw: fileName,
+      encoded: fileName,
+      review: {
+        kind: 'playwright',
+        sourceFile: `${sourceFile}:42`,
+        testTitle: titlePath.at(-1),
+        testTitlePath: titlePath,
+        title: titlePath.at(-1),
+      },
+    }],
+  }
+}
+
 function sourceReviewState(fileName = snapshot) {
   return {
     prNumber: '26',
@@ -72,7 +93,7 @@ function sourceReviewState(fileName = snapshot) {
   }
 }
 
-test('main publishing can store approved baseline snapshots with image hashes', async () => {
+test('main publishing can store approved baseline tests with image hashes', async () => {
   const { reportDir, tempDir } = tempReport()
   try {
     writeFileSync(path.join(reportDir, '__reg__', '1_actual', snapshot), 'approved-png')
@@ -89,7 +110,7 @@ test('main publishing can store approved baseline snapshots with image hashes', 
         },
       },
       initialReviewState: sourceReviewState(),
-      payload: payload(),
+      payload: payloadForTestIdentity(),
       reportDir,
       surface,
       surfaceLabel: 'Playwright UI',
@@ -98,11 +119,62 @@ test('main publishing can store approved baseline snapshots with image hashes', 
 
     assert.equal(baseline.surface, surface)
     assert.equal(baseline.summary.approved, 1)
+    assert.equal(baseline.summary.tests, 1)
     assert.equal(baseline.snapshots[snapshot].decision, 'approved')
     assert.equal(baseline.snapshots[snapshot].sourcePrNumber, '26')
     assert.match(baseline.snapshots[snapshot].imageSha256, /^[a-f0-9]{64}$/)
+    const baselineTest = Object.values(baseline.tests)[0]
+    assert.equal(baselineTest.snapshot, snapshot)
+    assert.equal(baselineTest.testIdentity.kind, 'playwright')
+    assert.deepEqual(baselineTest.testIdentity.testTitlePath, ['settings.spec.ts', 'Settings panel', 'shows defaults'])
   } finally {
     rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('PR publishing keeps same-image snapshots reviewable when the test identity is new', async () => {
+  const baselineReport = tempReport()
+  const prReport = tempReport()
+  try {
+    writeFileSync(path.join(baselineReport.reportDir, '__reg__', '1_actual', snapshot), 'approved-png')
+    const surfaceBaseline = await buildSurfaceBaselineReviewState({
+      context: {
+        headRef: 'main',
+        headSha: 'main-head-sha',
+        reportHref: 'https://example.github.io/example-product/playwright/latest/',
+        repository,
+      },
+      initialReviewState: sourceReviewState(),
+      payload: payloadForTestIdentity({
+        titlePath: ['settings.spec.ts', 'Settings panel', 'shows defaults'],
+      }),
+      reportDir: baselineReport.reportDir,
+      surface,
+      surfaceLabel: 'Playwright UI',
+      updatedAt: '2026-05-05T00:00:00.000Z',
+    })
+
+    writeFileSync(path.join(prReport.reportDir, '__reg__', '1_actual', snapshot), 'approved-png')
+    const filtered = await applyBaselineReviewStateToPayload({
+      baselineState: {
+        repository,
+        schema: 'visual-review-pages.visual-baseline-state.v1',
+        surfaces: { [surface]: surfaceBaseline },
+        updatedAt: '2026-05-05T00:00:00.000Z',
+        version: 1,
+      },
+      payload: payloadForTestIdentity({
+        titlePath: ['settings.spec.ts', 'Settings panel', 'shows a new mode'],
+      }),
+      reportDir: prReport.reportDir,
+      surface,
+    })
+
+    assert.equal(filtered.newItems.length, 1)
+    assert.equal(filtered.passedItems.length, 0)
+  } finally {
+    rmSync(baselineReport.tempDir, { recursive: true, force: true })
+    rmSync(prReport.tempDir, { recursive: true, force: true })
   }
 })
 
@@ -119,7 +191,7 @@ test('PR publishing hides baseline-approved items only when current image hash m
         repository,
       },
       initialReviewState: sourceReviewState(),
-      payload: payload(),
+      payload: payloadForTestIdentity(),
       reportDir: baselineReport.reportDir,
       surface,
       surfaceLabel: 'Playwright UI',
@@ -135,7 +207,7 @@ test('PR publishing hides baseline-approved items only when current image hash m
         updatedAt: '2026-05-05T00:00:00.000Z',
         version: 1,
       },
-      payload: payload(),
+      payload: payloadForTestIdentity(),
       reportDir: prReport.reportDir,
       surface,
     })
@@ -153,7 +225,7 @@ test('PR publishing hides baseline-approved items only when current image hash m
         updatedAt: '2026-05-05T00:00:00.000Z',
         version: 1,
       },
-      payload: payload(),
+      payload: payloadForTestIdentity(),
       reportDir: prReport.reportDir,
       surface,
     })

@@ -18,6 +18,7 @@ export async function buildSurfaceBaselineReviewState({
 }) {
   const sourceSurface = initialReviewState?.surfaces?.[surface]
   const snapshots = {}
+  const tests = {}
 
   for (const { item, variant } of baselineCandidateItems(payload)) {
     const fileName = itemFileName(item)
@@ -29,7 +30,9 @@ export async function buildSurfaceBaselineReviewState({
     const imageSha256 = await hashReportImage({ fileName, payload, reportDir })
     if (!imageSha256) continue
 
-    snapshots[fileName] = {
+    const testIdentity = itemTestIdentity(item)
+    const testKey = testIdentity ? testIdentityKey(testIdentity) : ''
+    const entry = {
       decision: 'approved',
       group: String(decision.group || item.review?.domain || item.visualMetadata?.domain || 'ungrouped'),
       imageSha256,
@@ -40,10 +43,15 @@ export async function buildSurfaceBaselineReviewState({
       sourcePrNumber: String(initialReviewState?.prNumber || context.sourcePullRequest?.number || ''),
       sourcePrUrl: String(initialReviewState?.prUrl || context.sourcePullRequest?.url || ''),
       sourceVariant: String(decision.variant || variant),
+      testIdentity,
+      testKey,
     }
+    snapshots[fileName] = entry
+    if (testKey) tests[testKey] = entry
   }
 
   const approved = Object.keys(snapshots).length
+  const approvedTests = Object.keys(tests).length
   return {
     baseRef: String(context.baseRef || ''),
     headRef: String(context.headRef || ''),
@@ -55,9 +63,11 @@ export async function buildSurfaceBaselineReviewState({
     summary: {
       approved,
       snapshots: approved,
+      tests: approvedTests,
     },
     surface: String(surface || ''),
     surfaceLabel: String(surfaceLabel || surface || ''),
+    tests,
     updatedAt,
   }
 }
@@ -121,7 +131,7 @@ async function isBaselineApprovedItem({ baseline, item, payload, reportDir, vari
   const fileName = itemFileName(item)
   if (!fileName) return false
 
-  const baselineEntry = baseline.snapshots[fileName]
+  const baselineEntry = baselineEntryForItem(baseline, item)
   if (baselineEntry?.decision !== 'approved' || !baselineEntry.imageSha256) return false
 
   const currentSha = await hashReportImage({ fileName, payload, reportDir })
@@ -129,8 +139,7 @@ async function isBaselineApprovedItem({ baseline, item, payload, reportDir, vari
 }
 
 function baselinePassedItem(baseline, item, variant) {
-  const fileName = itemFileName(item)
-  const baselineEntry = baseline.snapshots[fileName] || {}
+  const baselineEntry = baselineEntryForItem(baseline, item) || {}
   return {
     ...item,
     baselineApproval: {
@@ -139,9 +148,20 @@ function baselinePassedItem(baseline, item, variant) {
       imageSha256: baselineEntry.imageSha256 || '',
       sourcePrNumber: baselineEntry.sourcePrNumber || '',
       sourcePrUrl: baselineEntry.sourcePrUrl || '',
+      sourceTestKey: baselineEntry.testKey || '',
       sourceVariant: baselineEntry.sourceVariant || variant,
     },
   }
+}
+
+function baselineEntryForItem(baseline, item) {
+  const testIdentity = itemTestIdentity(item)
+  if (testIdentity) {
+    return baseline.tests?.[testIdentityKey(testIdentity)] || null
+  }
+
+  const fileName = itemFileName(item)
+  return fileName ? baseline.snapshots?.[fileName] || null : null
 }
 
 function approvedDecisionForItem(surfaceState, item, variant) {
@@ -185,6 +205,83 @@ function itemFileName(item) {
 function reviewItemId(item, variant) {
   const fileName = itemFileName(item)
   return fileName ? `${variant}-${fileName}`.replace(/[=?&]/g, '-') : ''
+}
+
+function itemTestIdentity(item) {
+  const review = item?.review && typeof item.review === 'object' ? item.review : null
+  if (!review) return null
+
+  const kind = stringOrNull(review.kind) || 'visual'
+  const sourceFile = normalizedSourceFile(review.sourceFile || review.subtitle)
+
+  if (kind === 'playwright') {
+    const testTitlePath = stringArray(review.testTitlePath)
+    const testTitle = stringOrNull(review.testTitle) || stringOrNull(review.title) || testTitlePath.at(-1) || ''
+    if (!sourceFile && testTitlePath.length === 0 && !testTitle) return null
+
+    return compactIdentity({
+      kind,
+      sourceFile,
+      testProjectName: stringOrNull(review.testProjectName) || '',
+      testTitle,
+      testTitlePath,
+    })
+  }
+
+  if (kind === 'storybook') {
+    const storyId = stringOrNull(review.storyId)
+    const storyExportName = stringOrNull(review.storyExportName)
+    const storyName = stringOrNull(review.storyName)
+    const storyTitle = stringOrNull(review.storyTitle)
+    if (!storyId && !sourceFile && !storyExportName && !storyName && !storyTitle) return null
+
+    return compactIdentity({
+      kind,
+      sourceFile,
+      storyExportName: storyExportName || '',
+      storyId: storyId || '',
+      storyName: storyName || '',
+      storyTitle: storyTitle || '',
+    })
+  }
+
+  const name = stringOrNull(review.name)
+  const title = stringOrNull(review.title)
+  if (!sourceFile && !name && !title) return null
+
+  return compactIdentity({
+    kind,
+    name: name || '',
+    sourceFile,
+    title: title || '',
+  })
+}
+
+function testIdentityKey(identity) {
+  return createHash('sha256').update(JSON.stringify(identity)).digest('hex')
+}
+
+function compactIdentity(identity) {
+  return Object.fromEntries(
+    Object.entries(identity).filter(([, value]) => (
+      Array.isArray(value) ? value.length > 0 : value !== ''
+    ))
+  )
+}
+
+function stringOrNull(value) {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function stringArray(value) {
+  return Array.isArray(value)
+    ? value.filter((entry) => typeof entry === 'string' && entry.length > 0)
+    : []
+}
+
+function normalizedSourceFile(value) {
+  const sourceFile = stringOrNull(value)
+  return sourceFile ? sourceFile.replace(/:\d+(?::\d+)?$/, '') : ''
 }
 
 function resolveInside(rootDir, relativePath) {

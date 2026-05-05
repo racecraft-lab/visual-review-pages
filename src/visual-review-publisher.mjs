@@ -279,6 +279,7 @@ function reviewMetadataFromManifest(manifest) {
       subtitle: titlePath.length > 1 ? titlePath.join(' > ') : sourceFile,
       tags: reviewTags.length ? reviewTags : manifestTags,
       testAnnotations: annotationArray(manifest.test?.annotations),
+      testProjectName: stringOrNull(manifest.test?.projectName),
       testTitle: stringOrNull(manifest.test?.title),
       testTitlePath: titlePath,
       title: stringOrNull(review.title) || stringOrNull(manifest.test?.title) || fallbackDisplayName(manifest.name),
@@ -1264,6 +1265,7 @@ async function publishReport(options) {
     const latestReportDir = path.join(pagesDir, surface, 'latest')
     const reportHref = `${baseUrl}/${surface}/${reportKey}/`
     const latestHref = `${baseUrl}/${surface}/latest/`
+    const manifestDirs = manifestDirsForOptions(options)
     const reviewContext = {
       repository,
       baseUrl,
@@ -1298,7 +1300,7 @@ async function publishReport(options) {
         reportHtml,
         extracted: extractedReport,
         targetDir: runReportDir,
-        manifestDirs: manifestDirsForOptions(options),
+        manifestDirs,
         context: {
           ...reviewContext,
           reportHref,
@@ -1310,7 +1312,7 @@ async function publishReport(options) {
         reportHtml,
         extracted: extractedReport,
         targetDir: latestReportDir,
-        manifestDirs: manifestDirsForOptions(options),
+        manifestDirs,
         context: {
           ...reviewContext,
           reportHref: latestHref,
@@ -1354,13 +1356,14 @@ async function publishReport(options) {
       await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`)
 
       if (initialReviewState?.state) {
+        const baselinePayload = await enrichReportPayload(extractedReport.payload, reportDir, manifestDirs)
         const surfaceBaseline = await buildSurfaceBaselineReviewState({
           context: {
             ...reviewContext,
             reportHref: latestHref,
           },
           initialReviewState: initialReviewState.state,
-          payload: extractedReport.payload,
+          payload: baselinePayload,
           reportDir,
           surface,
           surfaceLabel: surfaceInfo.label,
@@ -1410,10 +1413,12 @@ async function publishReport(options) {
   const reportHtml = await readFile(reportFile, 'utf8')
   const extractedReport = extractReportPayload(reportHtml)
   const reportDir = path.dirname(reportFile)
+  const manifestDirs = manifestDirsForOptions(options)
   const baselineState = await readJsonIfPresent(path.join(pagesDir, 'visual-baseline-state.json'), null)
+  const baselineCandidatePayload = await enrichReportPayload(extractedReport.payload, reportDir, manifestDirs)
   const baselineFilteredPayload = await applyBaselineReviewStateToPayload({
     baselineState,
-    payload: extractedReport.payload,
+    payload: baselineCandidatePayload,
     reportDir,
     surface,
   })
@@ -1453,7 +1458,7 @@ async function publishReport(options) {
       reportHtml,
       extracted: reportForPages,
       targetDir: runReportDir,
-      manifestDirs: manifestDirsForOptions(options),
+      manifestDirs,
       context: {
         ...reviewContext,
         reportHref,
@@ -1465,7 +1470,7 @@ async function publishReport(options) {
       reportHtml,
       extracted: reportForPages,
       targetDir: latestReportDir,
-      manifestDirs: manifestDirsForOptions(options),
+      manifestDirs,
       context: {
         ...reviewContext,
         reportHref: latestHref,

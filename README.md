@@ -30,9 +30,10 @@ bundle because Agentation is distributed as a React component.
   publishing, so reviewers opening the report later see the approval/rejection
   decisions that unblocked that PR.
 - Main-branch publishing also writes a durable `visual-baseline-state.json`
-  artifact with approved snapshot image hashes. Future PR reports use that
-  baseline state to remove already-approved unchanged images from the review
-  queue, while same-named images with different hashes still require review.
+  artifact with approved test/story identities and image hashes. Future PR
+  reports use that baseline state to remove already-approved unchanged tests
+  from the review queue, while new test identities and changed image hashes
+  still require review.
 - Links back to the raw reg-viz report, workflow run, and pull request.
 - Image annotation page for current/baseline/diff assets. Reviewers can open a
   screenshot, mark it with Agentation, and post GitHub PR comments that include
@@ -109,9 +110,12 @@ published under `/pr/<number>/<surface>/latest/`; main reports are published
 under `/<surface>/<sha>/` and `/<surface>/latest/`. Main publishes update
 `visual-baseline-state.json` when the current main report can be traced to a
 merged PR with approved managed review state. Pull request publishes read that
-baseline file and hash-match current images against it before showing items to
-reviewers, so a stale reg-viz artifact baseline does not force reviewers to
-reapprove unchanged screens. Set `artifact_paths` to the caller repo's generated
+baseline file and match current items by producer-supplied Playwright test or
+Storybook story identity plus image hash before showing items to reviewers, so
+a stale reg-viz artifact baseline does not force reviewers to reapprove
+unchanged tests. A new test/story identity is reviewable even if it reuses an
+approved screenshot filename and produces identical image bytes. Set
+`artifact_paths` to the caller repo's generated
 evidence paths, prefixed with `repo/` because the reusable workflow checks the
 product repository out into that subdirectory.
 

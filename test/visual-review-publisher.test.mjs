@@ -215,6 +215,133 @@ test('publisher CLI filters PR items already approved in the main baseline state
   }
 })
 
+test('publisher CLI does not baseline-approve a new test that reuses an approved snapshot image', () => {
+  const repoRoot = process.cwd()
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), 'visual-review-publisher-test-baseline-'))
+  const reportDir = path.join(tempDir, 'visual-report')
+  const actualDir = path.join(reportDir, '__reg__', '1_actual')
+  const pagesDir = path.join(tempDir, 'pages')
+  const snapshot = 'audit-widget--default.png'
+  const imageContent = 'approved-png'
+  const oldTestIdentity = {
+    kind: 'playwright',
+    sourceFile: 'tests/e2e/audit.spec.ts',
+    testTitle: 'shows the old approved state',
+    testTitlePath: ['audit.spec.ts', 'Audit widget', 'shows the old approved state'],
+  }
+  const oldTestKey = createHash('sha256').update(JSON.stringify(oldTestIdentity)).digest('hex')
+
+  try {
+    mkdirSync(actualDir, { recursive: true })
+    mkdirSync(pagesDir, { recursive: true })
+    writeFileSync(path.join(actualDir, snapshot), imageContent)
+    writeFileSync(path.join(actualDir, 'audit-widget--default.visual.json'), `${JSON.stringify({
+      version: 1,
+      kind: 'playwright',
+      name: 'audit-widget--default',
+      sourceFile: 'tests/e2e/audit.spec.ts',
+      test: {
+        title: 'shows a new unapproved state',
+        titlePath: ['audit.spec.ts', 'Audit widget', 'shows a new unapproved state'],
+        sourceFile: 'tests/e2e/audit.spec.ts',
+        line: 42,
+      },
+    }, null, 2)}\n`)
+    const baselineEntry = {
+      decision: 'approved',
+      imageSha256: createHash('sha256').update(imageContent).digest('hex'),
+      snapshot,
+      sourcePrNumber: '11',
+      sourcePrUrl: 'https://github.com/example/reusable-product/pull/11',
+      sourceVariant: 'new',
+      testIdentity: oldTestIdentity,
+      testKey: oldTestKey,
+    }
+    writeFileSync(path.join(pagesDir, 'visual-baseline-state.json'), `${JSON.stringify({
+      repository: 'example/reusable-product',
+      schema: 'visual-review-pages.visual-baseline-state.v1',
+      surfaces: {
+        audit: {
+          headSha: 'main-head',
+          reportHref: 'https://example.github.io/reusable-product/audit/latest/',
+          repository: 'example/reusable-product',
+          snapshots: {
+            [snapshot]: baselineEntry,
+          },
+          summary: {
+            approved: 1,
+            snapshots: 1,
+            tests: 1,
+          },
+          surface: 'audit',
+          surfaceLabel: 'Audit Screens',
+          tests: {
+            [oldTestKey]: baselineEntry,
+          },
+          updatedAt: '2026-05-05T00:00:00.000Z',
+        },
+      },
+      updatedAt: '2026-05-05T00:00:00.000Z',
+      version: 1,
+    }, null, 2)}\n`)
+
+    const payload = {
+      actualDir: '__reg__/1_actual',
+      deletedItems: [],
+      diffDir: '__reg__/0_diff',
+      expectedDir: '__reg__/2_expected',
+      failedItems: [],
+      newItems: [{ raw: snapshot, encoded: snapshot }],
+      passedItems: [],
+    }
+    const reportFile = path.join(reportDir, 'audit.html')
+    writeFileSync(reportFile, `<script>window['__reg__'] = ${JSON.stringify(payload)};</script>`)
+
+    const result = spawnSync(process.execPath, [
+      path.join(repoRoot, 'bin', 'publish-visual-review-pages.mjs'),
+      '--surface',
+      'audit',
+      '--report-file',
+      reportFile,
+      '--pages-dir',
+      pagesDir,
+      '--repository',
+      'example/reusable-product',
+      '--pr-number',
+      '12',
+      '--head-ref',
+      'feature/visuals',
+      '--base-ref',
+      'main',
+      '--sha',
+      'abcdef1234567890',
+      '--run-id',
+      '456',
+      '--run-attempt',
+      '1',
+      '--base-url',
+      'https://example.github.io/reusable-product',
+    ], {
+      cwd: tempDir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GITHUB_SHA: 'abcdef1234567890',
+      },
+    })
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+
+    const latestDir = path.join(pagesDir, 'pr', '12', 'audit', 'latest')
+    const reviewData = extractReviewData(readFileSync(path.join(latestDir, 'index.html'), 'utf8'))
+
+    assert.equal(reviewData.payload.newItems.length, 1)
+    assert.equal(reviewData.payload.passedItems.length, 0)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
 test('publisher retries rejected Pages pushes from a fresh remote snapshot', () => {
   const source = readFileSync(path.join(process.cwd(), 'src', 'visual-review-publisher.mjs'), 'utf8')
 

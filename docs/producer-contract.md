@@ -166,9 +166,13 @@ read from `failedItems`; new snapshots from `newItems`; removed snapshots from
 
 Items may include a producer-supplied `review` object. The app treats this as
 reviewer-facing metadata and uses it for display labels, filtering, search, and
-the sticky reviewer brief beside the screenshot canvas. Producers should keep
+the sticky reviewer brief beside the screenshot canvas. The publisher also uses
+stable Playwright test and Storybook story identifiers from this object when it
+builds and applies the main-branch visual baseline. Producers should keep
 `title`, `description`, `focus`, `sourceFile`, and story/test identifiers
-readable because those fields are the primary reviewer orientation surface.
+readable and stable because those fields are both the primary reviewer
+orientation surface and the guard that prevents a new test from inheriting an
+older approval solely by reusing a screenshot filename.
 
 ```json
 {
@@ -192,6 +196,7 @@ readable because those fields are the primary reviewer orientation surface.
         "sourceFile": "tests/e2e/spec-008/budgets.spec.ts:42",
         "testTitle": "shows budget utilization",
         "testTitlePath": ["budgets", "shows budget utilization"],
+        "testProjectName": "chromium",
         "testAnnotations": [
           { "type": "review-focus", "description": "Check the budget labels." }
         ]
