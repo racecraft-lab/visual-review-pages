@@ -113,6 +113,85 @@ test('publisher CLI creates a reusable PR visual report bundle with annotation a
   }
 })
 
+test('publisher CLI resolves changed-item filenames to actual PNG assets', () => {
+  const repoRoot = process.cwd()
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), 'visual-review-publisher-png-assets-'))
+  const reportDir = path.join(tempDir, 'visual-report')
+  const actualDir = path.join(reportDir, '__reg__', '1_actual')
+  const expectedDir = path.join(reportDir, '__reg__', '2_expected')
+  const diffDir = path.join(reportDir, '__reg__', '0_diff')
+  const pagesDir = path.join(tempDir, 'pages')
+  const pngSnapshot = 'governance/dashboard.png'
+  const webpSnapshot = 'governance/dashboard.webp'
+
+  try {
+    mkdirSync(path.join(actualDir, 'governance'), { recursive: true })
+    mkdirSync(path.join(expectedDir, 'governance'), { recursive: true })
+    mkdirSync(path.join(diffDir, 'governance'), { recursive: true })
+    writeFileSync(path.join(actualDir, pngSnapshot), 'actual-png')
+    writeFileSync(path.join(expectedDir, pngSnapshot), 'expected-png')
+    writeFileSync(path.join(diffDir, webpSnapshot), 'diff-webp')
+
+    const payload = {
+      actualDir: '__reg__/1_actual',
+      deletedItems: [],
+      diffDir: '__reg__/0_diff',
+      diffImageExtention: 'webp',
+      expectedDir: '__reg__/2_expected',
+      failedItems: [{ raw: webpSnapshot, encoded: webpSnapshot }],
+      newItems: [],
+      passedItems: [],
+    }
+    const reportFile = path.join(reportDir, 'audit.html')
+    writeFileSync(reportFile, `<script>window['__reg__'] = ${JSON.stringify(payload)};</script>`)
+
+    const result = spawnSync(process.execPath, [
+      path.join(repoRoot, 'bin', 'publish-visual-review-pages.mjs'),
+      '--surface',
+      'audit',
+      '--report-file',
+      reportFile,
+      '--pages-dir',
+      pagesDir,
+      '--repository',
+      'example/reusable-product',
+      '--pr-number',
+      '12',
+      '--head-ref',
+      'feature/visuals',
+      '--base-ref',
+      'main',
+      '--sha',
+      'abcdef1234567890',
+      '--run-id',
+      '456',
+      '--run-attempt',
+      '1',
+      '--base-url',
+      'https://example.github.io/reusable-product',
+    ], {
+      cwd: tempDir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GITHUB_SHA: 'abcdef1234567890',
+      },
+    })
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+
+    const latestDir = path.join(pagesDir, 'pr', '12', 'audit', 'latest')
+    const reviewData = extractReviewData(readFileSync(path.join(latestDir, 'index.html'), 'utf8'))
+
+    assert.equal(reviewData.payload.failedItems[0].encoded, pngSnapshot)
+    assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', pngSnapshot)), true)
+    assert.equal(existsSync(path.join(latestDir, '__reg__', '2_expected', pngSnapshot)), true)
+    assert.equal(existsSync(path.join(latestDir, '__reg__', '0_diff', webpSnapshot)), true)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
 test('publisher CLI filters PR items already approved in the main baseline state', () => {
   const repoRoot = process.cwd()
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'visual-review-publisher-baseline-'))

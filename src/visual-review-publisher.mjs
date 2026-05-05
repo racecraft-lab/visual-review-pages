@@ -450,6 +450,64 @@ function itemFileName(item) {
   return typeof fileName === 'string' && fileName.length > 0 ? fileName : null
 }
 
+const IMAGE_FILE_EXTENSIONS = ['.png', '.webp', '.jpg', '.jpeg', '.gif']
+
+function imageFileNameCandidates(fileName) {
+  const parsed = path.parse(fileName)
+  const extensions = IMAGE_FILE_EXTENSIONS.filter((extension) => extension !== parsed.ext.toLowerCase())
+  return extensions.map((extension) => {
+    const candidate = `${parsed.name}${extension}`
+    return parsed.dir ? `${parsed.dir}/${candidate}` : candidate
+  })
+}
+
+function hasAssetFile(rootDir, fileName) {
+  return existsSync(resolveInside(rootDir, fileName))
+}
+
+function resolveExistingAssetFile(sourceDirs, fileName) {
+  if (!fileName) return fileName
+  for (const sourceDir of sourceDirs) {
+    if (existsSync(sourceDir) && hasAssetFile(sourceDir, fileName)) return fileName
+  }
+
+  for (const candidate of imageFileNameCandidates(fileName)) {
+    for (const sourceDir of sourceDirs) {
+      if (existsSync(sourceDir) && hasAssetFile(sourceDir, candidate)) return candidate
+    }
+  }
+
+  return fileName
+}
+
+function itemWithFileName(item, fileName) {
+  const current = itemFileName(item)
+  if (!fileName || fileName === current) return item
+  return {
+    ...item,
+    raw: fileName,
+    encoded: fileName,
+  }
+}
+
+function resolveReportAssetFileNames(payload, reportDir) {
+  const actualDir = path.resolve(reportDir, payload.actualDir)
+  const expectedDir = path.resolve(reportDir, payload.expectedDir)
+
+  const resolveItems = (key, sourceDirs) => reportItems(payload, key).map((item) => {
+    const fileName = itemFileName(item)
+    return itemWithFileName(item, resolveExistingAssetFile(sourceDirs, fileName))
+  })
+
+  return {
+    ...payload,
+    deletedItems: resolveItems('deletedItems', [expectedDir]),
+    failedItems: resolveItems('failedItems', [actualDir, expectedDir]),
+    newItems: resolveItems('newItems', [actualDir]),
+    passedItems: resolveItems('passedItems', [actualDir]),
+  }
+}
+
 function diffFileName(item, payload) {
   const fileName = itemFileName(item)
   if (!fileName) return null
@@ -504,8 +562,8 @@ async function copyReportAssetDir({ label, sourceDir, targetDir, requiredFiles }
 }
 
 async function writeReportBundle({ reportFile, reportHtml, extracted, targetDir, context, manifestDirs }) {
-  const payload = extracted.payload
   const reportDir = path.dirname(reportFile)
+  const payload = resolveReportAssetFileNames(extracted.payload, reportDir)
   const enrichedPayload = await enrichReportPayload(payload, reportDir, manifestDirs)
   const requiredFiles = requiredAssetFiles(payload)
   const assetRoot = path.join(targetDir, '__reg__')
