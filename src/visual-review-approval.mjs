@@ -61,6 +61,7 @@ function actionRunUrl(repository) {
 async function githubRequest(path, options = {}) {
   const token = options.token || process.env.GITHUB_TOKEN
   if (options.requireToken && !token) throw new Error('GITHUB_TOKEN is required')
+  const apiUrl = process.env.GITHUB_API_URL || 'https://api.github.com'
   const headers = {
     accept: 'application/vnd.github+json',
     'x-github-api-version': '2022-11-28',
@@ -68,7 +69,7 @@ async function githubRequest(path, options = {}) {
   if (token) headers.authorization = `Bearer ${token}`
   if (options.body) headers['content-type'] = 'application/json'
 
-  const response = await fetch(`https://api.github.com${path}`, {
+  const response = await fetch(`${apiUrl}${path}`, {
     method: options.method || 'GET',
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,

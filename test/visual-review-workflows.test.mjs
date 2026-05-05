@@ -14,6 +14,7 @@ test('report workflow is reusable and publishes through the packaged CLI', () =>
   assert.match(workflow, /surface:/)
   assert.match(workflow, /visual_test_command:/)
   assert.match(workflow, /image_directory_path:/)
+  assert.match(workflow, /artifact_paths:/)
   assert.match(workflow, /actions\/checkout@v6/)
   assert.match(workflow, /repository: racecraft-lab\/visual-review-pages/)
   assert.match(workflow, /bin\/publish-visual-review-pages\.mjs/)

@@ -40,6 +40,13 @@ on:
         required: false
         default: visual-review-artifacts
         type: string
+      artifact_paths:
+        description: Newline-separated artifact paths relative to the workflow workspace.
+        required: false
+        default: |
+          repo/test-results/
+          repo/playwright-report/
+        type: string
       install_command:
         description: Dependency install command run from the caller repo.
         required: false
@@ -255,9 +262,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact_name }}
-          path: |
-            repo/test-results/
-            repo/playwright-report/
+          path: ${{ inputs.artifact_paths }}
           if-no-files-found: ignore
           retention-days: 14
 

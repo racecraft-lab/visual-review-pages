@@ -90,6 +90,9 @@ jobs:
       manifest_dir: test-results/visual-metadata
       image_directory_path: test-results/visual-snapshots
       report_file_path: test-results/visual-report/report.html
+      artifact_paths: |
+        repo/test-results/
+        repo/playwright-report/
       workflow_file: visual-playwright.yml
       pages_branch: visual-regression-pages
       base_url: https://example-org.github.io/example-product
@@ -99,7 +102,9 @@ The report workflow checks out the caller repo and this repo, runs the caller's
 visual command, runs `reg-viz/reg-actions`, then runs
 `publish-visual-review-pages` from this package. Pull request reports are
 published under `/pr/<number>/<surface>/latest/`; main reports are published
-under `/<surface>/<sha>/` and `/<surface>/latest/`.
+under `/<surface>/<sha>/` and `/<surface>/latest/`. Set `artifact_paths` to the
+caller repo's generated evidence paths, prefixed with `repo/` because the
+reusable workflow checks the product repository out into that subdirectory.
 
 ### Approval status workflow
 
