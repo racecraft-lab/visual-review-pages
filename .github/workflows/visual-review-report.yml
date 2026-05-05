@@ -261,7 +261,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ inputs.artifact_name }}
+          name: ${{ format('{0}-evidence', inputs.artifact_name) }}
           path: ${{ inputs.artifact_paths }}
           if-no-files-found: ignore
           retention-days: 14

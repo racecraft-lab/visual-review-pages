@@ -21,6 +21,7 @@ test('report workflow is reusable and publishes through the packaged CLI', () =>
   assert.match(workflow, /reg-viz\/reg-actions@v3/)
   assert.match(workflow, /Resolve GitHub Pages base URL/)
   assert.match(workflow, /GITHUB_REPOSITORY_OWNER/)
+  assert.match(workflow, /format\('\{0\}-evidence', inputs\.artifact_name\)/)
   assert.match(workflow, /contents: write/)
   assert.match(workflow, /pull-requests: write/)
 })
