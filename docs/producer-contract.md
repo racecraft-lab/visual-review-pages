@@ -87,11 +87,14 @@ Required fields:
 
 Optional fields can be included by producers and ignored by the current app.
 
-Main-branch reports that are published from a merged PR should include the
-source PR and its managed review state when the publisher can resolve them with
-the workflow token. This lets the static report open with the same approved or
-rejected decisions that unblocked the merged PR, without requiring the reviewer
-browser to fetch closed PR comments:
+Main-branch reports that are published from a merged PR, or from a direct main
+commit after that merge, should include the source PR and its managed review
+state when the publisher can resolve them with the workflow token. Producers
+should only reuse a prior PR review state when that state dispositions every
+reviewable item in the current report for the active visual surface. This lets
+the static report open with the same approved or rejected decisions that
+unblocked the merged PR, without requiring the reviewer browser to fetch closed
+PR comments:
 
 ```json
 {
