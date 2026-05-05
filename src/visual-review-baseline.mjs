@@ -47,7 +47,20 @@ export async function buildSurfaceBaselineReviewState({
       testKey,
     }
     snapshots[fileName] = entry
-    if (testKey) tests[testKey] = entry
+    if (testKey) {
+      tests[testKey] = tests[testKey] || {
+        decision: 'approved',
+        group: entry.group,
+        reviewer: entry.reviewer,
+        sourceDecisionUpdatedAt: entry.sourceDecisionUpdatedAt,
+        sourcePrNumber: entry.sourcePrNumber,
+        sourcePrUrl: entry.sourcePrUrl,
+        snapshots: {},
+        testIdentity,
+        testKey,
+      }
+      tests[testKey].snapshots[fileName] = entry
+    }
   }
 
   const approved = Object.keys(snapshots).length
@@ -96,11 +109,13 @@ export async function applyBaselineReviewStateToPayload({
     return payload
   }
 
+  const approvalPlan = await baselineApprovalPlan({ baseline: surfaceBaseline, payload, reportDir })
   const baselineApprovedItems = []
   const failedItems = []
   for (const item of reportItems(payload, 'failedItems')) {
-    if (await isBaselineApprovedItem({ baseline: surfaceBaseline, item, payload, reportDir, variant: 'changed' })) {
-      baselineApprovedItems.push(baselinePassedItem(surfaceBaseline, item, 'changed'))
+    const baselineEntry = approvalPlan.get(itemApprovalKey(item, 'changed'))
+    if (baselineEntry) {
+      baselineApprovedItems.push(baselinePassedItem(surfaceBaseline, item, 'changed', baselineEntry))
     } else {
       failedItems.push(item)
     }
@@ -108,8 +123,9 @@ export async function applyBaselineReviewStateToPayload({
 
   const newItems = []
   for (const item of reportItems(payload, 'newItems')) {
-    if (await isBaselineApprovedItem({ baseline: surfaceBaseline, item, payload, reportDir, variant: 'new' })) {
-      baselineApprovedItems.push(baselinePassedItem(surfaceBaseline, item, 'new'))
+    const baselineEntry = approvalPlan.get(itemApprovalKey(item, 'new'))
+    if (baselineEntry) {
+      baselineApprovedItems.push(baselinePassedItem(surfaceBaseline, item, 'new', baselineEntry))
     } else {
       newItems.push(item)
     }
@@ -127,29 +143,18 @@ export async function applyBaselineReviewStateToPayload({
   }
 }
 
-async function isBaselineApprovedItem({ baseline, item, payload, reportDir, variant }) {
-  const fileName = itemFileName(item)
-  if (!fileName) return false
-
-  const baselineEntry = baselineEntryForItem(baseline, item)
-  if (baselineEntry?.decision !== 'approved' || !baselineEntry.imageSha256) return false
-
-  const currentSha = await hashReportImage({ fileName, payload, reportDir })
-  return Boolean(currentSha && currentSha === baselineEntry.imageSha256)
-}
-
-function baselinePassedItem(baseline, item, variant) {
-  const baselineEntry = baselineEntryForItem(baseline, item) || {}
+function baselinePassedItem(baseline, item, variant, baselineEntry = null) {
+  const entry = baselineEntry || baselineEntryForItem(baseline, item) || {}
   return {
     ...item,
     baselineApproval: {
       baselineHeadSha: baseline.headSha || '',
       baselineReportHref: baseline.reportHref || '',
-      imageSha256: baselineEntry.imageSha256 || '',
-      sourcePrNumber: baselineEntry.sourcePrNumber || '',
-      sourcePrUrl: baselineEntry.sourcePrUrl || '',
-      sourceTestKey: baselineEntry.testKey || '',
-      sourceVariant: baselineEntry.sourceVariant || variant,
+      imageSha256: entry.imageSha256 || '',
+      sourcePrNumber: entry.sourcePrNumber || '',
+      sourcePrUrl: entry.sourcePrUrl || '',
+      sourceTestKey: entry.testKey || '',
+      sourceVariant: entry.sourceVariant || variant,
     },
   }
 }
@@ -157,11 +162,76 @@ function baselinePassedItem(baseline, item, variant) {
 function baselineEntryForItem(baseline, item) {
   const testIdentity = itemTestIdentity(item)
   if (testIdentity) {
-    return baseline.tests?.[testIdentityKey(testIdentity)] || null
+    const fileName = itemFileName(item)
+    return testBaselineEntryForFile(baseline.tests?.[testIdentityKey(testIdentity)], fileName)
   }
 
   const fileName = itemFileName(item)
   return fileName ? baseline.snapshots?.[fileName] || null : null
+}
+
+async function baselineApprovalPlan({ baseline, payload, reportDir }) {
+  const plan = new Map()
+  const candidates = [
+    ...reportItems(payload, 'failedItems').map((item) => ({ item, variant: 'changed' })),
+    ...reportItems(payload, 'newItems').map((item) => ({ item, variant: 'new' })),
+  ]
+  const grouped = new Map()
+
+  for (const candidate of candidates) {
+    const fileName = itemFileName(candidate.item)
+    if (!fileName) continue
+
+    const identity = itemTestIdentity(candidate.item)
+    if (!identity) {
+      const entry = baseline.snapshots?.[fileName]
+      if (await entryMatchesImage({ entry, fileName, payload, reportDir })) {
+        plan.set(itemApprovalKey(candidate.item, candidate.variant), entry)
+      }
+      continue
+    }
+
+    const testKey = testIdentityKey(identity)
+    if (!grouped.has(testKey)) grouped.set(testKey, [])
+    grouped.get(testKey).push({ ...candidate, fileName })
+  }
+
+  for (const [testKey, group] of grouped) {
+    const testBaseline = baseline.tests?.[testKey]
+    if (!testBaseline) continue
+
+    const matches = []
+    for (const candidate of group) {
+      const entry = testBaselineEntryForFile(testBaseline, candidate.fileName)
+      if (!await entryMatchesImage({ entry, fileName: candidate.fileName, payload, reportDir })) {
+        matches.length = 0
+        break
+      }
+      matches.push({ ...candidate, entry })
+    }
+
+    for (const match of matches) {
+      plan.set(itemApprovalKey(match.item, match.variant), match.entry)
+    }
+  }
+
+  return plan
+}
+
+async function entryMatchesImage({ entry, fileName, payload, reportDir }) {
+  if (entry?.decision !== 'approved' || !entry.imageSha256) return false
+
+  const currentSha = await hashReportImage({ fileName, payload, reportDir })
+  return Boolean(currentSha && currentSha === entry.imageSha256)
+}
+
+function testBaselineEntryForFile(testBaseline, fileName) {
+  if (!testBaseline || !fileName) return null
+  if (testBaseline.snapshots && typeof testBaseline.snapshots === 'object') {
+    return testBaseline.snapshots[fileName] || null
+  }
+
+  return testBaseline.snapshot === fileName ? testBaseline : null
 }
 
 function approvedDecisionForItem(surfaceState, item, variant) {
@@ -205,6 +275,10 @@ function itemFileName(item) {
 function reviewItemId(item, variant) {
   const fileName = itemFileName(item)
   return fileName ? `${variant}-${fileName}`.replace(/[=?&]/g, '-') : ''
+}
+
+function itemApprovalKey(item, variant) {
+  return reviewItemId(item, variant)
 }
 
 function itemTestIdentity(item) {

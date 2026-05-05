@@ -54,6 +54,26 @@ function payloadForTestIdentity({
   }
 }
 
+function payloadForTestSnapshots(fileNames, {
+  sourceFile = 'tests/e2e/settings.spec.ts',
+  titlePath = ['settings.spec.ts', 'Settings panel', 'captures key states'],
+} = {}) {
+  return {
+    ...payload(fileNames[0]),
+    newItems: fileNames.map((fileName) => ({
+      raw: fileName,
+      encoded: fileName,
+      review: {
+        kind: 'playwright',
+        sourceFile: `${sourceFile}:42`,
+        testTitle: titlePath.at(-1),
+        testTitlePath: titlePath,
+        title: titlePath.at(-1),
+      },
+    })),
+  }
+}
+
 function sourceReviewState(fileName = snapshot) {
   return {
     prNumber: '26',
@@ -93,6 +113,22 @@ function sourceReviewState(fileName = snapshot) {
   }
 }
 
+function sourceReviewStateForSnapshots(fileNames) {
+  const state = sourceReviewState(fileNames[0])
+  state.surfaces[surface].decisions = Object.fromEntries(fileNames.map((fileName) => [
+    `new-${fileName}`,
+    {
+      decision: 'approved',
+      group: 'settings',
+      reviewer: 'reviewer',
+      snapshot: fileName,
+      updatedAt: '2026-05-04T20:00:00.000Z',
+      variant: 'new',
+    },
+  ]))
+  return state
+}
+
 test('main publishing can store approved baseline tests with image hashes', async () => {
   const { reportDir, tempDir } = tempReport()
   try {
@@ -124,7 +160,7 @@ test('main publishing can store approved baseline tests with image hashes', asyn
     assert.equal(baseline.snapshots[snapshot].sourcePrNumber, '26')
     assert.match(baseline.snapshots[snapshot].imageSha256, /^[a-f0-9]{64}$/)
     const baselineTest = Object.values(baseline.tests)[0]
-    assert.equal(baselineTest.snapshot, snapshot)
+    assert.equal(baselineTest.snapshots[snapshot].snapshot, snapshot)
     assert.equal(baselineTest.testIdentity.kind, 'playwright')
     assert.deepEqual(baselineTest.testIdentity.testTitlePath, ['settings.spec.ts', 'Settings panel', 'shows defaults'])
   } finally {
@@ -232,6 +268,97 @@ test('PR publishing hides baseline-approved items only when current image hash m
 
     assert.equal(changed.newItems.length, 1)
     assert.equal(changed.passedItems.length, 0)
+  } finally {
+    rmSync(baselineReport.tempDir, { recursive: true, force: true })
+    rmSync(prReport.tempDir, { recursive: true, force: true })
+  }
+})
+
+test('PR publishing hides every item for an unchanged multi-snapshot test', async () => {
+  const baselineReport = tempReport()
+  const prReport = tempReport()
+  const snapshots = ['settings/default.png', 'settings/expanded.png']
+  try {
+    writeFileSync(path.join(baselineReport.reportDir, '__reg__', '1_actual', snapshots[0]), 'default-png')
+    writeFileSync(path.join(baselineReport.reportDir, '__reg__', '1_actual', snapshots[1]), 'expanded-png')
+    const surfaceBaseline = await buildSurfaceBaselineReviewState({
+      context: {
+        headRef: 'main',
+        headSha: 'main-head-sha',
+        reportHref: 'https://example.github.io/example-product/playwright/latest/',
+        repository,
+      },
+      initialReviewState: sourceReviewStateForSnapshots(snapshots),
+      payload: payloadForTestSnapshots(snapshots),
+      reportDir: baselineReport.reportDir,
+      surface,
+      surfaceLabel: 'Playwright UI',
+      updatedAt: '2026-05-05T00:00:00.000Z',
+    })
+
+    writeFileSync(path.join(prReport.reportDir, '__reg__', '1_actual', snapshots[0]), 'default-png')
+    writeFileSync(path.join(prReport.reportDir, '__reg__', '1_actual', snapshots[1]), 'expanded-png')
+    const filtered = await applyBaselineReviewStateToPayload({
+      baselineState: {
+        repository,
+        schema: 'visual-review-pages.visual-baseline-state.v1',
+        surfaces: { [surface]: surfaceBaseline },
+        updatedAt: '2026-05-05T00:00:00.000Z',
+        version: 1,
+      },
+      payload: payloadForTestSnapshots(snapshots),
+      reportDir: prReport.reportDir,
+      surface,
+    })
+
+    assert.equal(filtered.newItems.length, 0)
+    assert.equal(filtered.passedItems.length, 2)
+    assert.equal(filtered.passedItems[0].baselineApproval.sourceTestKey, filtered.passedItems[1].baselineApproval.sourceTestKey)
+  } finally {
+    rmSync(baselineReport.tempDir, { recursive: true, force: true })
+    rmSync(prReport.tempDir, { recursive: true, force: true })
+  }
+})
+
+test('PR publishing keeps the whole multi-snapshot test reviewable when one snapshot changes', async () => {
+  const baselineReport = tempReport()
+  const prReport = tempReport()
+  const snapshots = ['settings/default.png', 'settings/expanded.png']
+  try {
+    writeFileSync(path.join(baselineReport.reportDir, '__reg__', '1_actual', snapshots[0]), 'default-png')
+    writeFileSync(path.join(baselineReport.reportDir, '__reg__', '1_actual', snapshots[1]), 'expanded-png')
+    const surfaceBaseline = await buildSurfaceBaselineReviewState({
+      context: {
+        headRef: 'main',
+        headSha: 'main-head-sha',
+        reportHref: 'https://example.github.io/example-product/playwright/latest/',
+        repository,
+      },
+      initialReviewState: sourceReviewStateForSnapshots(snapshots),
+      payload: payloadForTestSnapshots(snapshots),
+      reportDir: baselineReport.reportDir,
+      surface,
+      surfaceLabel: 'Playwright UI',
+      updatedAt: '2026-05-05T00:00:00.000Z',
+    })
+
+    writeFileSync(path.join(prReport.reportDir, '__reg__', '1_actual', snapshots[0]), 'default-png')
+    writeFileSync(path.join(prReport.reportDir, '__reg__', '1_actual', snapshots[1]), 'changed-expanded-png')
+    const filtered = await applyBaselineReviewStateToPayload({
+      baselineState: {
+        repository,
+        schema: 'visual-review-pages.visual-baseline-state.v1',
+        surfaces: { [surface]: surfaceBaseline },
+        updatedAt: '2026-05-05T00:00:00.000Z',
+        version: 1,
+      },
+      payload: payloadForTestSnapshots(snapshots),
+      reportDir: prReport.reportDir,
+      surface,
+    })
+
+    assert.equal(filtered.newItems.length, 2)
+    assert.equal(filtered.passedItems.length, 0)
   } finally {
     rmSync(baselineReport.tempDir, { recursive: true, force: true })
     rmSync(prReport.tempDir, { recursive: true, force: true })
