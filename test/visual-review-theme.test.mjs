@@ -11,6 +11,7 @@ test('review queue and annotation pages share a persistent light/dark theme cont
   const css = read('src/visual-review-app.css')
   const queueApp = read('src/visual-review-app.js')
   const annotationApp = read('src/visual-annotation-app.jsx')
+  const publisher = read('src/visual-review-publisher.mjs')
 
   assert.match(css, /:root\[data-theme="dark"\]/)
   assert.match(css, /color-scheme: dark/)
@@ -25,4 +26,10 @@ test('review queue and annotation pages share a persistent light/dark theme cont
   assert.match(annotationApp, /visual-review:theme/)
   assert.match(annotationApp, /toggleVisualReviewTheme/)
   assert.match(annotationApp, /document\.documentElement\.dataset\.theme/)
+
+  assert.match(publisher, /visual-review:theme/)
+  assert.match(publisher, /data-theme-toggle/)
+  assert.match(publisher, /:root\[data-theme="dark"\]/)
+  assert.match(publisher, /prefers-color-scheme: dark/)
+  assert.match(publisher, /indexThemeRuntimeScript/)
 })
