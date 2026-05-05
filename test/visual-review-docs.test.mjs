@@ -21,4 +21,5 @@ test('README documents the reusable workflow and CLI contract for future repos',
   assert.match(readme, /visual_review_paths/)
   assert.match(readme, /pages_branch/)
   assert.match(readme, /GitHub Pages/)
+  assert.match(readme, /access_level: organization/)
 })

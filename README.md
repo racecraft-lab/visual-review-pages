@@ -142,6 +142,10 @@ or backend-only PRs can pass without a visual review.
 
 Configure the product repo's GitHub Pages source to deploy from the
 `visual-regression-pages` branch and `/` root, or pass another `pages_branch`.
+If this `visual-review-pages` repository is private, configure its Actions
+workflow access policy to allow repositories in the organization to call its
+reusable workflows. The GitHub REST setting is
+`actions/permissions/access` with `access_level: organization`.
 The workflow token needs:
 
 - `contents: write` for publishing the Pages branch.
