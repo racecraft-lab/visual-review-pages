@@ -87,6 +87,41 @@ Required fields:
 
 Optional fields can be included by producers and ignored by the current app.
 
+Main-branch reports that are published from a merged PR should include the
+source PR and its managed review state when the publisher can resolve them with
+the workflow token. This lets the static report open with the same approved or
+rejected decisions that unblocked the merged PR, without requiring the reviewer
+browser to fetch closed PR comments:
+
+```json
+{
+  "reportMode": "main",
+  "sourcePullRequest": {
+    "number": "26",
+    "title": "PR title",
+    "url": "https://github.com/org/repo/pull/26",
+    "indexHref": "https://org.github.io/repo/pr/26/",
+    "headSha": "645f75c000000000000000000000000000000000",
+    "mergeCommitSha": "abcdef0000000000000000000000000000000000"
+  },
+  "initialReviewState": {
+    "schema": "mission-control.visual-review-state.v1",
+    "version": 1,
+    "repository": "org/repo",
+    "prNumber": "26",
+    "surfaces": {}
+  },
+  "initialReviewStateAuthor": "reviewer",
+  "initialReviewStateCommentId": 2600
+}
+```
+
+When `initialReviewState` is present, the app imports it before making any
+browser-side GitHub API request. For main reports, a surface review state whose
+`headSha` matches either `context.headSha`, `sourcePullRequest.headSha`, or
+`sourcePullRequest.mergeCommitSha` is considered current for the displayed
+report.
+
 The annotation workflow derives all GitHub API targets from this context. Never
 hardcode repository, PR number, surface, run key, or head SHA in a deployed
 bundle; those values must come from the report context so multiple PRs can be

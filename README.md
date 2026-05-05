@@ -25,6 +25,9 @@ Agentation is distributed as a React component.
 - Optional GitHub token flow with a prefilled GitHub token-creation link for
   publishing shared PR review state and commit status updates from the static
   page.
+- Main-branch reports can embed the merged PR's managed review state during CI
+  publishing, so reviewers opening the report later see the approval/rejection
+  decisions that unblocked that PR.
 - Links back to the raw reg-viz report, workflow run, and pull request.
 - Image annotation page for current/baseline/diff assets. Reviewers can open a
   screenshot, mark it with Agentation, and post GitHub PR comments that include
