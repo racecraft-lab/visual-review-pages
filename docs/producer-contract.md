@@ -125,6 +125,19 @@ browser-side GitHub API request. For main reports, a surface review state whose
 `sourcePullRequest.mergeCommitSha` is considered current for the displayed
 report.
 
+Producers should use the shared resolver instead of reimplementing GitHub PR
+state discovery:
+
+```js
+import { resolveInitialReviewStateSource } from '@racecraft-lab/visual-review-pages/producer'
+```
+
+The resolver checks the current commit, recent main commit history, associated
+pull requests, and the managed hidden review-state PR comment. It returns a
+source PR only when the current report can be safely tied to that PR; inherited
+state is returned only when every current reviewable item on the surface already
+has an approved or rejected disposition.
+
 The annotation workflow derives all GitHub API targets from this context. Never
 hardcode repository, PR number, surface, run key, or head SHA in a deployed
 bundle; those values must come from the report context so multiple PRs can be

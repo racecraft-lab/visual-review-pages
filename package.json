@@ -3,9 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "exports": {
+    "./annotations": "./src/visual-review-annotations.mjs",
+    "./producer": "./src/visual-review-producer.mjs",
+    "./state": "./src/visual-review-state.mjs"
+  },
   "scripts": {
     "build": "vite build",
-    "check": "npm run build && node --check src/visual-review-app.js && node --check src/visual-review-state.mjs && node --check src/visual-review-annotations.mjs && node --test"
+    "check": "npm run build && node --check src/visual-review-app.js && node --check src/visual-review-state.mjs && node --check src/visual-review-annotations.mjs && node --check src/visual-review-producer.mjs && node --test"
   },
   "dependencies": {
     "agentation": "^3.0.2",
