@@ -106,6 +106,9 @@ on:
       visual_review_token:
         description: Optional token. Defaults to github.token when omitted.
         required: false
+      visual_review_pages_deploy_key:
+        description: Optional SSH deploy key used only for publishing the Pages branch.
+        required: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -198,6 +201,22 @@ jobs:
           if [ ! -e .git ]; then
             ln -s repo/.git .git
           fi
+
+      - name: Configure Pages deploy key
+        if: steps.visual.outcome == 'success' && (steps.manifest.outcome == 'success' || steps.manifest.outcome == 'skipped')
+        env:
+          VISUAL_REVIEW_PAGES_DEPLOY_KEY: ${{ secrets.visual_review_pages_deploy_key }}
+        run: |
+          if [ -z "$VISUAL_REVIEW_PAGES_DEPLOY_KEY" ]; then
+            exit 0
+          fi
+
+          install -m 700 -d "$HOME/.ssh"
+          key_path="$HOME/.ssh/visual_review_pages_deploy_key"
+          printf '%s\n' "$VISUAL_REVIEW_PAGES_DEPLOY_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          ssh-keyscan github.com >> "$HOME/.ssh/known_hosts"
+          echo "VISUAL_REVIEW_PAGES_SSH_COMMAND=ssh -i $key_path -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes" >> "$GITHUB_ENV"
 
       - name: Compare visual snapshots
         id: visual-regression

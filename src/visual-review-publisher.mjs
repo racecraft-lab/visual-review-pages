@@ -113,6 +113,30 @@ function run(command, args, options = {}) {
   throw new Error(`${command} ${args.join(' ')} failed${output ? `\n${output}` : ''}`)
 }
 
+function pagesGitEnv() {
+  if (!process.env.VISUAL_REVIEW_PAGES_SSH_COMMAND) return undefined
+  return {
+    ...process.env,
+    GIT_SSH_COMMAND: process.env.VISUAL_REVIEW_PAGES_SSH_COMMAND,
+  }
+}
+
+function pagesRemoteUrl(repository, token) {
+  if (process.env.VISUAL_REVIEW_PAGES_REMOTE_URL) {
+    return process.env.VISUAL_REVIEW_PAGES_REMOTE_URL
+  }
+
+  if (process.env.VISUAL_REVIEW_PAGES_SSH_COMMAND) {
+    return `git@github.com:${repository}.git`
+  }
+
+  if (!token) {
+    throw new Error('GITHUB_TOKEN is required when --pages-dir is not provided')
+  }
+
+  return `https://x-access-token:${token}@github.com/${repository}.git`
+}
+
 function safeBranchName(branch) {
   return String(branch || 'unknown').replace(/[^\w./-]+/g, '-')
 }
@@ -543,9 +567,10 @@ async function writeReportBundle({ reportFile, reportHtml, extracted, targetDir,
 
 async function clonePagesBranch({ repository, token, branch }) {
   const pagesDir = await mkdtemp(path.join(os.tmpdir(), 'visual-review-pages-'))
-  const remote = `https://x-access-token:${token}@github.com/${repository}.git`
+  const remote = pagesRemoteUrl(repository, token)
   const clone = run('git', ['clone', '--depth', '1', '--branch', branch, remote, pagesDir], {
     allowFailure: true,
+    env: pagesGitEnv(),
     quiet: true,
   })
 
@@ -563,7 +588,7 @@ async function publishPagesChanges({ addPaths, branch, message, pagesDir, rewrit
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     if (attempt > 1) {
-      run('git', ['fetch', 'origin', branch], { cwd: pagesDir })
+      run('git', ['fetch', 'origin', branch], { cwd: pagesDir, env: pagesGitEnv() })
       run('git', ['reset', '--hard', 'FETCH_HEAD'], { cwd: pagesDir })
       run('git', ['clean', '-fd'], { cwd: pagesDir })
       await rewrite()
@@ -577,7 +602,11 @@ async function publishPagesChanges({ addPaths, branch, message, pagesDir, rewrit
     }
 
     run('git', ['commit', '-m', message], { cwd: pagesDir })
-    const push = run('git', ['push', 'origin', `HEAD:${branch}`], { cwd: pagesDir, allowFailure: true })
+    const push = run('git', ['push', 'origin', `HEAD:${branch}`], {
+      cwd: pagesDir,
+      allowFailure: true,
+      env: pagesGitEnv(),
+    })
     if (push.status === 0) return
 
     console.warn(`[visual-pr-pages] push rejected; refreshing ${branch} and retrying (${attempt}/3)`)
@@ -1238,7 +1267,6 @@ async function publishReport(options) {
   let shouldCleanup = false
   if (!pagesDir) {
     const token = process.env.GITHUB_TOKEN
-    if (!token) throw new Error('GITHUB_TOKEN is required when --pages-dir is not provided')
     pagesDir = await clonePagesBranch({ repository, token, branch })
     shouldCleanup = true
   }
