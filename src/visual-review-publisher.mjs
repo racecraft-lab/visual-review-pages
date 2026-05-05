@@ -12,6 +12,11 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import {
+  applyBaselineReviewStateToPayload,
+  buildSurfaceBaselineReviewState,
+  mergeSurfaceBaselineReviewState,
+} from './visual-review-baseline.mjs'
+import {
   resolveInitialReviewStateSource,
 } from './visual-review-producer.mjs'
 
@@ -1240,6 +1245,7 @@ async function publishReport(options) {
   if (mode === 'main') {
     const reportHtml = await readFile(reportFile, 'utf8')
     const extractedReport = extractReportPayload(reportHtml)
+    const reportDir = path.dirname(reportFile)
     const { sourcePullRequest, initialReviewState } = await resolveInitialReviewStateSource({
       options,
       event,
@@ -1284,6 +1290,7 @@ async function publishReport(options) {
       createdAt,
       regVizHref: './reg-viz.html',
     }
+    const baselinePath = path.join(pagesDir, 'visual-baseline-state.json')
 
     const writeMainPages = async () => {
       await writeReportBundle({
@@ -1345,14 +1352,43 @@ async function publishReport(options) {
       ]
 
       await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`)
+
+      if (initialReviewState?.state) {
+        const surfaceBaseline = await buildSurfaceBaselineReviewState({
+          context: {
+            ...reviewContext,
+            reportHref: latestHref,
+          },
+          initialReviewState: initialReviewState.state,
+          payload: extractedReport.payload,
+          reportDir,
+          surface,
+          surfaceLabel: surfaceInfo.label,
+          updatedAt: createdAt,
+        })
+        const existingBaseline = await readJsonIfPresent(baselinePath, {
+          repository,
+          schema: 'visual-review-pages.visual-baseline-state.v1',
+          surfaces: {},
+          updatedAt: null,
+          version: 1,
+        })
+        await writeFile(
+          baselinePath,
+          `${JSON.stringify(mergeSurfaceBaselineReviewState(existingBaseline, surfaceBaseline), null, 2)}\n`
+        )
+      }
+
       await writeFile(path.join(pagesDir, 'index.html'), generateMainIndex(meta, baseUrl, projectName))
     }
 
     await writeMainPages()
 
     if (!options['pages-dir']) {
+      const addPaths = [surface, 'visual-main-runs.json', 'index.html']
+      if (initialReviewState?.state) addPaths.push('visual-baseline-state.json')
       await publishPagesChanges({
-        addPaths: [surface, 'visual-main-runs.json', 'index.html'],
+        addPaths,
         branch,
         message: `docs: publish main ${surface} visual report`,
         pagesDir,
@@ -1373,6 +1409,19 @@ async function publishReport(options) {
   const latestReportDir = path.join(prRoot, surface, 'latest')
   const reportHtml = await readFile(reportFile, 'utf8')
   const extractedReport = extractReportPayload(reportHtml)
+  const reportDir = path.dirname(reportFile)
+  const baselineState = await readJsonIfPresent(path.join(pagesDir, 'visual-baseline-state.json'), null)
+  const baselineFilteredPayload = await applyBaselineReviewStateToPayload({
+    baselineState,
+    payload: extractedReport.payload,
+    reportDir,
+    surface,
+  })
+  const reportForPages = {
+    ...extractedReport,
+    payload: baselineFilteredPayload,
+  }
+  const baselineApprovedCount = reportItems(baselineFilteredPayload, 'baselineApprovedItems').length
   const reportHref = `${baseUrl}/pr/${prNumber}/runs/${runKey}/${surface}/`
   const latestHref = `${baseUrl}/pr/${prNumber}/${surface}/latest/`
   const reviewContext = {
@@ -1394,6 +1443,7 @@ async function publishReport(options) {
     baseRef,
     headSha,
     createdAt,
+    baselineApprovedCount,
     regVizHref: './reg-viz.html',
   }
 
@@ -1401,7 +1451,7 @@ async function publishReport(options) {
     await writeReportBundle({
       reportFile,
       reportHtml,
-      extracted: extractedReport,
+      extracted: reportForPages,
       targetDir: runReportDir,
       manifestDirs: manifestDirsForOptions(options),
       context: {
@@ -1413,7 +1463,7 @@ async function publishReport(options) {
     await writeReportBundle({
       reportFile,
       reportHtml,
-      extracted: extractedReport,
+      extracted: reportForPages,
       targetDir: latestReportDir,
       manifestDirs: manifestDirsForOptions(options),
       context: {

@@ -19,6 +19,8 @@ test('report workflow is reusable and publishes through the packaged CLI', () =>
   assert.match(workflow, /repository: racecraft-lab\/visual-review-pages/)
   assert.match(workflow, /bin\/publish-visual-review-pages\.mjs/)
   assert.match(workflow, /reg-viz\/reg-actions@v3/)
+  assert.match(workflow, /Expose caller git metadata to workspace root/)
+  assert.match(workflow, /ln -s repo\/\.git \.git/)
   assert.match(workflow, /Resolve GitHub Pages base URL/)
   assert.match(workflow, /GITHUB_REPOSITORY_OWNER/)
   assert.match(workflow, /format\('\{0\}-evidence', inputs\.artifact_name\)/)

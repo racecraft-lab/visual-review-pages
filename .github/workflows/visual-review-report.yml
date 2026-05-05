@@ -192,6 +192,13 @@ jobs:
 
           echo "base_url=$base_url" >> "$GITHUB_OUTPUT"
 
+      - name: Expose caller git metadata to workspace root
+        if: steps.visual.outcome == 'success' && (steps.manifest.outcome == 'success' || steps.manifest.outcome == 'skipped')
+        run: |
+          if [ ! -e .git ]; then
+            ln -s repo/.git .git
+          fi
+
       - name: Compare visual snapshots
         id: visual-regression
         if: steps.visual.outcome == 'success' && (steps.manifest.outcome == 'success' || steps.manifest.outcome == 'skipped')

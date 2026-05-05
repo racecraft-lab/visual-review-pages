@@ -53,6 +53,7 @@ test('default visual-review path filters are reusable and callers can override t
   assert.equal(DEFAULT_VISUAL_REVIEW_PATHS.some((pattern) => pattern.includes('mission-control')), false)
   assert.equal(DEFAULT_VISUAL_REVIEW_PATHS.some((pattern) => pattern.includes('scripts/publish-visual-pr-pages.mjs')), false)
   assert.equal(visualReviewRequiredForFiles(['docs/readme.md']), false)
+  assert.equal(visualReviewRequiredForFiles(['.specify/memory/constitution.md']), false)
   assert.equal(visualReviewRequiredForFiles(['src/components/button.tsx']), true)
   assert.equal(visualReviewRequiredForFiles(['packages/mobile/screen.tsx'], ['packages/mobile/**']), true)
 })

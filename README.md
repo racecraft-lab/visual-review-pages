@@ -29,6 +29,10 @@ bundle because Agentation is distributed as a React component.
 - Main-branch reports can embed the merged PR's managed review state during CI
   publishing, so reviewers opening the report later see the approval/rejection
   decisions that unblocked that PR.
+- Main-branch publishing also writes a durable `visual-baseline-state.json`
+  artifact with approved snapshot image hashes. Future PR reports use that
+  baseline state to remove already-approved unchanged images from the review
+  queue, while same-named images with different hashes still require review.
 - Links back to the raw reg-viz report, workflow run, and pull request.
 - Image annotation page for current/baseline/diff assets. Reviewers can open a
   screenshot, mark it with Agentation, and post GitHub PR comments that include
@@ -102,9 +106,14 @@ The report workflow checks out the caller repo and this repo, runs the caller's
 visual command, runs `reg-viz/reg-actions`, then runs
 `publish-visual-review-pages` from this package. Pull request reports are
 published under `/pr/<number>/<surface>/latest/`; main reports are published
-under `/<surface>/<sha>/` and `/<surface>/latest/`. Set `artifact_paths` to the
-caller repo's generated evidence paths, prefixed with `repo/` because the
-reusable workflow checks the product repository out into that subdirectory.
+under `/<surface>/<sha>/` and `/<surface>/latest/`. Main publishes update
+`visual-baseline-state.json` when the current main report can be traced to a
+merged PR with approved managed review state. Pull request publishes read that
+baseline file and hash-match current images against it before showing items to
+reviewers, so a stale reg-viz artifact baseline does not force reviewers to
+reapprove unchanged screens. Set `artifact_paths` to the caller repo's generated
+evidence paths, prefixed with `repo/` because the reusable workflow checks the
+product repository out into that subdirectory.
 
 ### Approval status workflow
 
@@ -136,7 +145,9 @@ The approval workflow runs `check-visual-review-approval` from this package. It
 loads the managed hidden JSON from the PR comment, validates every required
 surface, and writes the `visual-review-approval` commit status. Set
 `visual_review_paths` to the caller repo's visual-producing files so docs-only
-or backend-only PRs can pass without a visual review.
+or backend-only PRs can pass without a visual review. Keep those paths aligned
+with the caller report workflow `pull_request.paths`; files that cannot change
+rendered UI should not trigger visual report generation or approval gating.
 
 ### GitHub Pages
 
