@@ -3,14 +3,20 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "bin": {
+    "check-visual-review-approval": "./bin/check-visual-review-approval.mjs",
+    "publish-visual-review-pages": "./bin/publish-visual-review-pages.mjs"
+  },
   "exports": {
     "./annotations": "./src/visual-review-annotations.mjs",
+    "./approval": "./src/visual-review-approval.mjs",
     "./producer": "./src/visual-review-producer.mjs",
+    "./publisher": "./src/visual-review-publisher.mjs",
     "./state": "./src/visual-review-state.mjs"
   },
   "scripts": {
     "build": "vite build",
-    "check": "npm run build && node --check src/visual-review-app.js && node --check src/visual-review-state.mjs && node --check src/visual-review-annotations.mjs && node --check src/visual-review-producer.mjs && node --test"
+    "check": "npm run build && node --check src/visual-review-app.js && node --check src/visual-review-state.mjs && node --check src/visual-review-annotations.mjs && node --check src/visual-review-producer.mjs && node --check src/visual-review-publisher.mjs && node --check src/visual-review-approval.mjs && node --check bin/publish-visual-review-pages.mjs && node --check bin/check-visual-review-approval.mjs && node --test"
   },
   "dependencies": {
     "agentation": "^3.0.2",

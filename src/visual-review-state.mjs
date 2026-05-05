@@ -1,8 +1,37 @@
-export const VISUAL_REVIEW_SCHEMA = 'mission-control.visual-review-state.v1'
-export const VISUAL_REVIEW_COMMENT_MARKER = 'mission-control-visual-review-state:v1'
+export const VISUAL_REVIEW_SCHEMA = 'visual-review-pages.visual-review-state.v1'
+export const VISUAL_REVIEW_COMMENT_MARKER = 'visual-review-pages-state:v1'
+export const LEGACY_VISUAL_REVIEW_SCHEMAS = ['mission-control.visual-review-state.v1']
+export const LEGACY_VISUAL_REVIEW_COMMENT_MARKERS = ['mission-control-visual-review-state:v1']
 export const VISUAL_REVIEW_STATUS_CONTEXT = 'visual-review-approval'
 export const DEFAULT_REQUIRED_VISUAL_SURFACES = ['playwright', 'storybook']
 export const DEFAULT_VISUAL_REVIEW_PATHS = [
+  '.storybook/**',
+  '**/*.story.*',
+  '**/*.stories.*',
+  '**/*.visual.*',
+  '**/__image_snapshots__/**',
+  '**/__snapshots__/**',
+  'app/**',
+  'components/**',
+  'pages/**',
+  'package.json',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'public/**',
+  'regconfig*.json',
+  'src/**',
+  'tests/**',
+  'yarn.lock',
+  'bun.lockb',
+  'playwright*.config.*',
+  'vite.config.*',
+  'vitest.config.*',
+  'next.config.*',
+  'tailwind.config.*',
+  'tsconfig.json',
+]
+
+export const MISSION_CONTROL_VISUAL_REVIEW_PATHS = [
   '.storybook/**',
   '.specify/memory/constitution.md',
   'Dockerfile',
@@ -176,7 +205,7 @@ export function renderReviewComment(state) {
     '-->',
     '## Visual review state',
     '',
-    'This comment is managed by the Mission Control visual review app.',
+    'This comment is managed by the visual-review-pages app.',
     '',
     `PR: #${normalized.prNumber} ${normalized.prTitle}`,
     `Last updated: ${normalized.updatedAt}`,
@@ -189,15 +218,18 @@ export function renderReviewComment(state) {
 
 export function parseReviewCommentBody(body) {
   if (typeof body !== 'string') return null
-  const marker = escapeRegExp(VISUAL_REVIEW_COMMENT_MARKER)
-  const match = body.match(new RegExp(`<!--\\s*${marker}\\s*([\\s\\S]*?)\\s*-->`))
-  if (!match) return null
-  try {
-    const parsed = JSON.parse(match[1].trim())
-    return isReviewState(parsed) ? normalizeReviewState(parsed) : null
-  } catch {
-    return null
+  for (const markerName of [VISUAL_REVIEW_COMMENT_MARKER, ...LEGACY_VISUAL_REVIEW_COMMENT_MARKERS]) {
+    const marker = escapeRegExp(markerName)
+    const match = body.match(new RegExp(`<!--\\s*${marker}\\s*([\\s\\S]*?)\\s*-->`))
+    if (!match) continue
+    try {
+      const parsed = JSON.parse(match[1].trim())
+      return isReviewState(parsed) ? normalizeReviewState(parsed) : null
+    } catch {
+      return null
+    }
   }
+  return null
 }
 
 export function findReviewComment(comments) {
@@ -292,10 +324,11 @@ export function normalizeReviewState(state) {
 }
 
 function isReviewState(value) {
+  const schemas = new Set([VISUAL_REVIEW_SCHEMA, ...LEGACY_VISUAL_REVIEW_SCHEMAS])
   return Boolean(
     value &&
     typeof value === 'object' &&
-    value.schema === VISUAL_REVIEW_SCHEMA &&
+    schemas.has(value.schema) &&
     value.surfaces &&
     typeof value.surfaces === 'object'
   )

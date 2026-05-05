@@ -21,6 +21,7 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
   const context = data.context
   const reviewableVariants = new Set(['changed', 'new', 'deleted'])
   const githubTokenDocsUrl = 'https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token'
+  const themeStorageKey = 'visual-review:theme'
   const embeddedReviewState = initialReviewStateContext()
 
   const state = {
@@ -43,6 +44,7 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
       ? 'Loading merged PR review state...'
       : (hasReviewStateTarget() ? 'Loading PR state...' : 'No linked PR review state is available.'),
     syncState: embeddedReviewState || !hasReviewStateTarget() ? 'ready' : 'loading',
+    theme: initialVisualReviewTheme(),
     tokenHelpOpen: false,
     zoom: clamp(Number(localStorage.getItem(storageKey('zoom')) || 100), 50, 200),
   }
@@ -54,6 +56,7 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
     ? initialId
     : (items.find((item) => reviewableVariants.has(item.variant)) || items[0])?.id
 
+  applyVisualReviewTheme(state.theme)
   render()
   window.addEventListener('keydown', handleKeys)
   if (embeddedReviewState) {
@@ -81,6 +84,24 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
 
   function githubTokenKey() {
     return `visual-review:${context.repository}:${context.prNumber}:github-token`
+  }
+
+  function initialVisualReviewTheme() {
+    const stored = localStorage.getItem(themeStorageKey)
+    if (stored === 'light' || stored === 'dark') return stored
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+
+  function applyVisualReviewTheme(theme) {
+    document.documentElement.dataset.theme = theme
+    document.documentElement.style.colorScheme = theme
+  }
+
+  function toggleVisualReviewTheme() {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark'
+    localStorage.setItem(themeStorageKey, state.theme)
+    applyVisualReviewTheme(state.theme)
+    render()
   }
 
   function githubTokenCreationUrl() {
@@ -337,18 +358,21 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
                 <span>${escapeHtml(context.surfaceLabel)}</span>
               </div>
             </div>
-            <div class="status-summary" aria-label="Review progress">
-              <div data-summary="open">
-                <span>Open</span>
-                <strong>${escapeHtml(String(currentCounts.reviewable - currentCounts.reviewed))}</strong>
-              </div>
-              <div data-summary="reviewed">
-                <span>Reviewed</span>
-                <strong>${escapeHtml(`${currentCounts.reviewed}/${currentCounts.reviewable}`)}</strong>
-              </div>
-              <div data-summary="rejected">
-                <span>Rejected</span>
-                <strong>${escapeHtml(String(currentCounts.rejected))}</strong>
+            <div class="topbar-actions">
+              <button class="btn theme-toggle" type="button" data-action="toggle-theme" aria-pressed="${state.theme === 'dark' ? 'true' : 'false'}">${state.theme === 'dark' ? 'Light' : 'Dark'}</button>
+              <div class="status-summary" aria-label="Review progress">
+                <div data-summary="open">
+                  <span>Open</span>
+                  <strong>${escapeHtml(String(currentCounts.reviewable - currentCounts.reviewed))}</strong>
+                </div>
+                <div data-summary="reviewed">
+                  <span>Reviewed</span>
+                  <strong>${escapeHtml(`${currentCounts.reviewed}/${currentCounts.reviewable}`)}</strong>
+                </div>
+                <div data-summary="rejected">
+                  <span>Rejected</span>
+                  <strong>${escapeHtml(String(currentCounts.rejected))}</strong>
+                </div>
               </div>
             </div>
           </div>
@@ -853,7 +877,7 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
     return `
       <article class="context-card">
         <p class="keyboard-help">
-          Keyboard: <kbd>Down</kbd>/<kbd>Up</kbd> navigate, <kbd>Y</kbd> approve, <kbd>N</kbd> reject, <kbd>/</kbd> search, <kbd>D</kbd> highlighter, <kbd>S</kbd> side by side, <kbd>O</kbd> overlay, <kbd>B</kbd> blink.
+          Keyboard: <kbd>Down</kbd>/<kbd>Up</kbd> navigate, <kbd>Y</kbd> approve, <kbd>N</kbd> reject, <kbd>/</kbd> search, <kbd>D</kbd> highlighter, <kbd>S</kbd> side by side, <kbd>O</kbd> overlay, <kbd>B</kbd> blink, <kbd>T</kbd> theme.
         </p>
       </article>
     `
@@ -905,6 +929,7 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
     })
     root.querySelector('[data-action="review-comment"]')?.addEventListener('input', updateReviewComment)
     root.querySelector('[data-action="post-inline-comment"]')?.addEventListener('click', postInlineReviewComment)
+    root.querySelector('[data-action="toggle-theme"]')?.addEventListener('click', toggleVisualReviewTheme)
     root.querySelector('[data-action="open-token-help"]')?.addEventListener('click', openTokenHelp)
     root.querySelectorAll('[data-action="close-token-help"]').forEach((button) => {
       button.addEventListener('click', closeTokenHelp)
@@ -1112,6 +1137,9 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
       setMode('overlay')
     } else if (event.key.toLowerCase() === 'b') {
       setMode('blink')
+    } else if (event.key.toLowerCase() === 't') {
+      event.preventDefault()
+      toggleVisualReviewTheme()
     }
   }
 

@@ -1,0 +1,122 @@
+name: Reusable Visual Review Approval
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: Optional pull request number. Pull request and issue_comment events are detected automatically.
+        required: false
+        default: ''
+        type: string
+      required_surfaces:
+        description: Comma-separated visual surface ids that must be approved.
+        required: false
+        default: playwright,storybook
+        type: string
+      visual_review_paths:
+        description: Optional comma-separated changed-file globs that require visual review.
+        required: false
+        default: ''
+        type: string
+      context:
+        description: Commit status context to write.
+        required: false
+        default: visual-review-approval
+        type: string
+      target_url:
+        description: Optional target URL for the commit status.
+        required: false
+        default: ''
+        type: string
+      visual_review_ref:
+        description: visual-review-pages ref to checkout.
+        required: false
+        default: main
+        type: string
+      node_version:
+        description: Node.js version used by visual-review-pages tooling.
+        required: false
+        default: '24'
+        type: string
+      skip_if_no_visual_changes:
+        description: Mark approval successful when the PR changed no visual-producing files.
+        required: false
+        default: true
+        type: boolean
+      soft_fail:
+        description: Keep the job green after writing a blocked status.
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      visual_review_token:
+        description: Optional token. Defaults to github.token when omitted.
+        required: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  visual-approval-status:
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout visual-review-pages
+        uses: actions/checkout@v6
+        with:
+          repository: racecraft-lab/visual-review-pages
+          ref: ${{ inputs.visual_review_ref }}
+          path: visual-review-pages
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Publish visual approval status
+        env:
+          GITHUB_TOKEN: ${{ secrets.visual_review_token || github.token }}
+          INPUT_CONTEXT: ${{ inputs.context }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_REQUIRED_SURFACES: ${{ inputs.required_surfaces }}
+          INPUT_SKIP_IF_NO_VISUAL_CHANGES: ${{ inputs.skip_if_no_visual_changes }}
+          INPUT_SOFT_FAIL: ${{ inputs.soft_fail }}
+          INPUT_TARGET_URL: ${{ inputs.target_url }}
+          INPUT_VISUAL_REVIEW_PATHS: ${{ inputs.visual_review_paths }}
+        run: |
+          args=(
+            --repository "${{ github.repository }}"
+            --set-status
+            --context "$INPUT_CONTEXT"
+            --required-surfaces "$INPUT_REQUIRED_SURFACES"
+          )
+
+          if [ -n "$INPUT_PR_NUMBER" ]; then
+            args+=(--pr-number "$INPUT_PR_NUMBER")
+          fi
+
+          if [ -n "$INPUT_TARGET_URL" ]; then
+            args+=(--target-url "$INPUT_TARGET_URL")
+          fi
+
+          if [ -n "$INPUT_VISUAL_REVIEW_PATHS" ]; then
+            args+=(--visual-review-paths "$INPUT_VISUAL_REVIEW_PATHS")
+          fi
+
+          if [ "$INPUT_SKIP_IF_NO_VISUAL_CHANGES" = "true" ]; then
+            args+=(--skip-if-no-visual-changes)
+          fi
+
+          if [ "$INPUT_SOFT_FAIL" = "true" ]; then
+            args+=(--soft-fail)
+          fi
+
+          node visual-review-pages/bin/check-visual-review-approval.mjs "${args[@]}"

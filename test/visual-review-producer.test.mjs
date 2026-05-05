@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { VISUAL_REVIEW_SCHEMA } from '../src/visual-review-state.mjs'
 import {
   resolveInitialReviewStateSource,
   reviewStateCoversReport,
@@ -128,7 +129,10 @@ test('main reports inherit covered visual review state from the last merged PR i
   assert.equal(result.sourcePullRequest.mergeCommitSha, mergedSha)
   assert.equal(result.initialReviewState.author, 'fgabelmannjr')
   assert.equal(result.initialReviewState.commentId, 2600)
-  assert.deepEqual(result.initialReviewState.state, approvedState)
+  assert.deepEqual(result.initialReviewState.state, {
+    ...approvedState,
+    schema: VISUAL_REVIEW_SCHEMA,
+  })
 })
 
 test('main report state inheritance requires every current reviewable item to be dispositioned', () => {

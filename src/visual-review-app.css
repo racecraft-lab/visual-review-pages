@@ -2,6 +2,7 @@
   color-scheme: light;
   --bg: #eef2f6;
   --panel: #ffffff;
+  --panel-rgb: 255, 255, 255;
   --panel-soft: #f7f9fc;
   --text: #172033;
   --muted: #5f6b7c;
@@ -9,15 +10,78 @@
   --line: #d9e0ea;
   --line-strong: #b8c3d3;
   --accent: #0f6f78;
+  --accent-strong: #0a5d64;
+  --accent-hover: #0a5d64;
+  --accent-contrast: #ffffff;
   --accent-soft: #e6f4f5;
   --open: #9a5b00;
   --open-soft: #fff4df;
   --approved: #147a45;
+  --approved-hover: #0f6538;
+  --approved-contrast: #ffffff;
   --approved-soft: #e5f6ed;
   --rejected: #b42318;
+  --rejected-hover: #941b13;
+  --rejected-contrast: #ffffff;
   --rejected-soft: #fee9e7;
+  --control: #ffffff;
+  --control-hover: #f7f9fc;
   --focus-ring: #8ac8ce;
+  --progress-track: #e6ebf2;
+  --stage-bg: #f9fbfd;
+  --stage-check-a: #edf2f8;
+  --stage-check-b: transparent;
+  --topbar-bg: rgba(255, 255, 255, 0.96);
   --shadow: 0 18px 48px rgba(23, 32, 51, 0.12);
+  --soft-shadow: 0 1px 1px rgba(23, 32, 51, 0.04);
+  --hover-shadow: 0 6px 14px rgba(23, 32, 51, 0.08);
+  --backdrop: rgba(23, 32, 51, 0.48);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e121b;
+  --panel: #151b27;
+  --panel-rgb: 21, 27, 39;
+  --panel-soft: #1b2331;
+  --text: #eef4ff;
+  --muted: #aab6c8;
+  --subtle: #8290a5;
+  --line: #2a3546;
+  --line-strong: #435067;
+  --accent: #67d5df;
+  --accent-strong: #7ee5ec;
+  --accent-hover: #8fe7ee;
+  --accent-contrast: #071018;
+  --accent-soft: #102f36;
+  --open: #f0bd62;
+  --open-soft: #332713;
+  --approved: #7bd69d;
+  --approved-hover: #95e4af;
+  --approved-contrast: #07140c;
+  --approved-soft: #123522;
+  --rejected: #ff8b80;
+  --rejected-hover: #ffa198;
+  --rejected-contrast: #1e0706;
+  --rejected-soft: #3a1b1d;
+  --control: #111827;
+  --control-hover: #1a2433;
+  --focus-ring: #4fc4cf;
+  --progress-track: #253044;
+  --stage-bg: #0f141d;
+  --stage-check-a: #151d29;
+  --stage-check-b: transparent;
+  --topbar-bg: rgba(14, 18, 27, 0.94);
+  --shadow: 0 18px 48px rgba(0, 0, 0, 0.46);
+  --soft-shadow: 0 1px 1px rgba(0, 0, 0, 0.28);
+  --hover-shadow: 0 6px 14px rgba(0, 0, 0, 0.3);
+  --backdrop: rgba(3, 7, 14, 0.68);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
 }
 
 * {
@@ -62,7 +126,7 @@ a {
   top: 0;
   z-index: 20;
   border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--topbar-bg);
   backdrop-filter: blur(12px);
 }
 
@@ -78,6 +142,18 @@ a {
 
 .topbar-title {
   min-width: 0;
+}
+
+.topbar-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.theme-toggle {
+  min-width: 76px;
+  white-space: nowrap;
 }
 
 .crumbs,
@@ -163,7 +239,7 @@ a {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: 0 1px 1px rgba(23, 32, 51, 0.04);
+  box-shadow: var(--soft-shadow);
 }
 
 .sidebar {
@@ -177,7 +253,7 @@ a {
 .sidebar-header {
   padding: 12px;
   border-bottom: 1px solid var(--line);
-  background: #fbfcfe;
+  background: var(--panel-soft);
 }
 
 .progress-line {
@@ -199,7 +275,7 @@ a {
   height: 7px;
   overflow: hidden;
   border-radius: 999px;
-  background: #e6ebf2;
+  background: var(--progress-track);
 }
 
 .progress-bar {
@@ -220,7 +296,7 @@ a {
   min-height: 34px;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
-  background: #fff;
+  background: var(--control);
   color: var(--text);
   cursor: pointer;
   font-size: 12px;
@@ -243,8 +319,8 @@ a {
 .filter-btn:hover:not(.active):not(:disabled),
 .btn:hover:not(:disabled) {
   border-color: var(--accent);
-  background: var(--panel-soft);
-  box-shadow: 0 6px 14px rgba(23, 32, 51, 0.08);
+  background: var(--control-hover);
+  box-shadow: var(--hover-shadow);
   transform: translateY(-1px);
 }
 
@@ -271,7 +347,7 @@ a {
   width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
-  background: #fff;
+  background: var(--control);
   color: var(--text);
   padding: 8px 10px;
   font-size: 13px;
@@ -320,7 +396,7 @@ a {
 .snapshot-button:hover {
   border-color: var(--line);
   background: var(--panel-soft);
-  box-shadow: 0 6px 14px rgba(23, 32, 51, 0.06);
+  box-shadow: var(--hover-shadow);
   transform: translateY(-1px);
 }
 
@@ -385,7 +461,7 @@ a {
   padding: 2px 6px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--control);
   color: var(--muted);
   font-size: 10px;
   font-weight: 800;
@@ -469,13 +545,13 @@ a {
 .btn.primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 
 .btn.primary:hover:not(:disabled) {
-  border-color: #0a5d64;
-  background: #0a5d64;
-  color: #fff;
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+  color: var(--accent-contrast);
 }
 
 .btn:disabled {
@@ -491,25 +567,25 @@ a {
 .btn.approve {
   border-color: var(--approved);
   background: var(--approved);
-  color: #fff;
+  color: var(--approved-contrast);
 }
 
 .btn.approve:hover:not(:disabled) {
-  border-color: #0f6538;
-  background: #0f6538;
-  color: #fff;
+  border-color: var(--approved-hover);
+  background: var(--approved-hover);
+  color: var(--approved-contrast);
 }
 
 .btn.reject {
   border-color: var(--rejected);
   background: var(--rejected);
-  color: #fff;
+  color: var(--rejected-contrast);
 }
 
 .btn.reject:hover:not(:disabled) {
-  border-color: #941b13;
-  background: #941b13;
-  color: #fff;
+  border-color: var(--rejected-hover);
+  background: var(--rejected-hover);
+  color: var(--rejected-contrast);
 }
 
 .segmented {
@@ -517,7 +593,7 @@ a {
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
-  background: #fff;
+  background: var(--control);
 }
 
 .segmented button {
@@ -566,11 +642,11 @@ a {
   height: calc(100vh - 188px);
   min-height: 620px;
   background:
-    linear-gradient(45deg, #edf2f8 25%, transparent 25%),
-    linear-gradient(-45deg, #edf2f8 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #edf2f8 75%),
-    linear-gradient(-45deg, transparent 75%, #edf2f8 75%);
-  background-color: #f9fbfd;
+    linear-gradient(45deg, var(--stage-check-a) 25%, var(--stage-check-b) 25%),
+    linear-gradient(-45deg, var(--stage-check-a) 25%, var(--stage-check-b) 25%),
+    linear-gradient(45deg, var(--stage-check-b) 75%, var(--stage-check-a) 75%),
+    linear-gradient(-45deg, var(--stage-check-b) 75%, var(--stage-check-a) 75%);
+  background-color: var(--stage-bg);
   background-position: 0 0, 0 10px, 10px -10px, -10px 0;
   background-size: 20px 20px;
   overflow: auto;
@@ -598,7 +674,7 @@ a {
 .image-panel,
 .solo-image,
 .overlay-frame {
-  background: #fff;
+  background: var(--control);
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   box-shadow: var(--shadow);
@@ -839,7 +915,7 @@ a {
   justify-content: center;
   border-radius: 999px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   font-size: 12px;
   font-weight: 900;
 }
@@ -899,7 +975,7 @@ a {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--control);
 }
 
 .brief-facts div {
@@ -979,7 +1055,7 @@ a {
   padding: 9px 10px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--control);
 }
 
 .inline-comment-target strong {
@@ -1040,7 +1116,7 @@ a {
 
 .sync-panel.loading {
   border-color: #8ac8ce;
-  background: #f4fbfb;
+  background: var(--accent-soft);
 }
 
 .sync-panel.error {
@@ -1092,7 +1168,7 @@ a {
   padding: 3px 8px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--control);
   color: var(--muted);
   font-size: 11px;
   font-weight: 850;
@@ -1104,7 +1180,7 @@ a {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--control);
 }
 
 .submission-readiness > span {
@@ -1156,7 +1232,7 @@ a {
   padding: 7px 8px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(var(--panel-rgb), 0.72);
 }
 
 .submission-metrics span {
@@ -1182,7 +1258,7 @@ a {
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--control);
 }
 
 .sync-submit-column .sync-status-line {
@@ -1294,7 +1370,7 @@ kbd {
   padding: 1px 5px;
   border: 1px solid var(--line-strong);
   border-radius: 5px;
-  background: #fff;
+  background: var(--control);
   color: var(--text);
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
@@ -1311,7 +1387,7 @@ kbd {
   position: fixed;
   inset: 0;
   z-index: 80;
-  background: rgba(23, 32, 51, 0.48);
+  background: var(--backdrop);
 }
 
 .token-help-modal {
@@ -1332,7 +1408,7 @@ kbd {
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: 0 28px 80px rgba(23, 32, 51, 0.28);
+  box-shadow: var(--shadow);
   pointer-events: auto;
 }
 
@@ -1473,7 +1549,7 @@ kbd {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: 0 1px 1px rgba(23, 32, 51, 0.04);
+  box-shadow: var(--soft-shadow);
 }
 
 .annotation-card h2,
@@ -1499,7 +1575,7 @@ kbd {
   justify-content: center;
   border: 1px solid var(--line-strong);
   border-radius: 5px;
-  background: #fff;
+  background: var(--control);
   color: var(--text);
   font-size: 11px;
   font-weight: 900;
@@ -1551,7 +1627,7 @@ kbd {
   border: 2px solid #ffffff;
   border-radius: 999px;
   background: #107e85;
-  box-shadow: 0 2px 8px rgba(23, 32, 51, 0.28);
+  box-shadow: var(--hover-shadow);
   color: #ffffff;
   font-size: 11px;
   font-weight: 900;

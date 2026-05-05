@@ -1,0 +1,266 @@
+name: Reusable Visual Review Report
+
+on:
+  workflow_call:
+    inputs:
+      surface:
+        description: Stable visual surface id, for example playwright or storybook.
+        required: true
+        type: string
+      surface_label:
+        description: Human-readable label shown in the review UI.
+        required: false
+        default: ''
+        type: string
+      project_name:
+        description: Human-readable project name shown in generated Pages indexes.
+        required: false
+        default: ''
+        type: string
+      visual_test_command:
+        description: Command that generates visual images and metadata.
+        required: true
+        type: string
+      manifest_command:
+        description: Optional command that validates visual metadata before publishing.
+        required: false
+        default: ''
+        type: string
+      image_directory_path:
+        description: Path, relative to the caller repo root, containing current images for reg-viz.
+        required: true
+        type: string
+      report_file_path:
+        description: Path, relative to the caller repo root, where reg-viz writes the HTML report.
+        required: false
+        default: test-results/visual-report/report.html
+        type: string
+      artifact_name:
+        description: GitHub artifact name for the raw visual evidence.
+        required: false
+        default: visual-review-artifacts
+        type: string
+      install_command:
+        description: Dependency install command run from the caller repo.
+        required: false
+        default: pnpm install --frozen-lockfile
+        type: string
+      package_manager:
+        description: Package manager setup to apply. Supported values are pnpm, npm, or none.
+        required: false
+        default: pnpm
+        type: string
+      pnpm_version:
+        description: pnpm version used when package_manager is pnpm.
+        required: false
+        default: '10'
+        type: string
+      node_version:
+        description: Node.js version used by the caller repo and visual-review-pages tooling.
+        required: false
+        default: '24'
+        type: string
+      install_playwright_chromium:
+        description: Whether to install Playwright Chromium before running visual tests.
+        required: false
+        default: true
+        type: boolean
+      pages_branch:
+        description: Branch where static visual review pages are published.
+        required: false
+        default: visual-regression-pages
+        type: string
+      base_url:
+        description: Optional GitHub Pages base URL. Defaults to https://OWNER.github.io/REPO.
+        required: false
+        default: ''
+        type: string
+      workflow_file:
+        description: Caller workflow filename to show in review metadata.
+        required: false
+        default: ''
+        type: string
+      manifest_dir:
+        description: Optional visual metadata directory passed to the publisher.
+        required: false
+        default: ''
+        type: string
+      visual_review_ref:
+        description: visual-review-pages ref to checkout.
+        required: false
+        default: main
+        type: string
+      timeout_minutes:
+        description: Job timeout in minutes.
+        required: false
+        default: 30
+        type: number
+    secrets:
+      visual_review_token:
+        description: Optional token. Defaults to github.token when omitted.
+        required: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+permissions:
+  contents: write
+  actions: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  visual-review-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    concurrency:
+      group: visual-pages-${{ github.event_name }}-${{ github.ref }}-${{ inputs.surface }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v6
+        with:
+          path: repo
+          fetch-depth: 0
+
+      - name: Checkout visual-review-pages
+        uses: actions/checkout@v6
+        with:
+          repository: racecraft-lab/visual-review-pages
+          ref: ${{ inputs.visual_review_ref }}
+          path: visual-review-pages
+
+      - name: Setup pnpm
+        if: inputs.package_manager == 'pnpm'
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ inputs.pnpm_version }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Install caller dependencies
+        if: inputs.install_command != ''
+        working-directory: repo
+        run: ${{ inputs.install_command }}
+
+      - name: Install Playwright Chromium
+        if: inputs.install_playwright_chromium
+        working-directory: repo
+        run: npx playwright install --with-deps chromium
+
+      - name: Run visual tests
+        id: visual
+        continue-on-error: true
+        working-directory: repo
+        env:
+          GITHUB_TOKEN: ${{ secrets.visual_review_token || github.token }}
+        run: ${{ inputs.visual_test_command }}
+
+      - name: Verify visual metadata
+        id: manifest
+        if: always() && inputs.manifest_command != ''
+        continue-on-error: true
+        working-directory: repo
+        run: ${{ inputs.manifest_command }}
+
+      - name: Prepare visual report directory
+        if: steps.visual.outcome == 'success' && (steps.manifest.outcome == 'success' || steps.manifest.outcome == 'skipped')
+        run: mkdir -p "repo/$(dirname '${{ inputs.report_file_path }}')"
+
+      - name: Resolve GitHub Pages base URL
+        id: pages
+        env:
+          INPUT_BASE_URL: ${{ inputs.base_url }}
+        run: |
+          if [ -n "$INPUT_BASE_URL" ]; then
+            base_url="${INPUT_BASE_URL%/}"
+          else
+            repo_name="${GITHUB_REPOSITORY#*/}"
+            base_url="https://${GITHUB_REPOSITORY_OWNER}.github.io/${repo_name}"
+          fi
+
+          echo "base_url=$base_url" >> "$GITHUB_OUTPUT"
+
+      - name: Compare visual snapshots
+        id: visual-regression
+        if: steps.visual.outcome == 'success' && (steps.manifest.outcome == 'success' || steps.manifest.outcome == 'skipped')
+        continue-on-error: true
+        uses: reg-viz/reg-actions@v3
+        with:
+          github-token: ${{ secrets.visual_review_token || github.token }}
+          image-directory-path: repo/${{ inputs.image_directory_path }}
+          artifact-name: ${{ inputs.artifact_name }}
+          branch: visual-regression-artifacts
+          report-file-path: repo/${{ inputs.report_file_path }}
+          custom-report-page: ${{ github.event_name == 'pull_request' && format('{0}/pr/{1}/{2}/latest/', steps.pages.outputs.base_url, github.event.pull_request.number, inputs.surface) || '' }}
+          comment-report-format: summarized
+          outdated-comment-action: minimize
+          retention-days: 30
+
+      - name: Publish PR visual report to GitHub Pages
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.visual.outcome == 'success' && (steps.manifest.outcome == 'success' || steps.manifest.outcome == 'skipped')
+        env:
+          GITHUB_TOKEN: ${{ secrets.visual_review_token || github.token }}
+          VISUAL_REVIEW_PAGES_BRANCH: ${{ inputs.pages_branch }}
+          VISUAL_REVIEW_PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
+          VISUAL_REVIEW_MANIFEST_DIR: ${{ inputs.manifest_dir }}
+          VISUAL_REVIEW_PROJECT_NAME: ${{ inputs.project_name }}
+        run: |
+          args=(
+            --surface "${{ inputs.surface }}"
+            --surface-label "${{ inputs.surface_label }}"
+            --workflow-file "${{ inputs.workflow_file }}"
+            --project-name "${{ inputs.project_name }}"
+            --report-file "repo/${{ inputs.report_file_path }}"
+            --repository "${{ github.repository }}"
+          )
+
+          if [ -n "$VISUAL_REVIEW_MANIFEST_DIR" ]; then
+            args+=(--manifest-dir "repo/$VISUAL_REVIEW_MANIFEST_DIR")
+          fi
+
+          node visual-review-pages/bin/publish-visual-review-pages.mjs "${args[@]}"
+
+      - name: Publish main visual report to GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.visual.outcome == 'success' && (steps.manifest.outcome == 'success' || steps.manifest.outcome == 'skipped')
+        env:
+          GITHUB_TOKEN: ${{ secrets.visual_review_token || github.token }}
+          VISUAL_REVIEW_PAGES_BRANCH: ${{ inputs.pages_branch }}
+          VISUAL_REVIEW_PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
+          VISUAL_REVIEW_MANIFEST_DIR: ${{ inputs.manifest_dir }}
+          VISUAL_REVIEW_PROJECT_NAME: ${{ inputs.project_name }}
+        run: |
+          args=(
+            --surface "${{ inputs.surface }}"
+            --surface-label "${{ inputs.surface_label }}"
+            --workflow-file "${{ inputs.workflow_file }}"
+            --project-name "${{ inputs.project_name }}"
+            --report-file "repo/${{ inputs.report_file_path }}"
+            --repository "${{ github.repository }}"
+            --mode main
+          )
+
+          if [ -n "$VISUAL_REVIEW_MANIFEST_DIR" ]; then
+            args+=(--manifest-dir "repo/$VISUAL_REVIEW_MANIFEST_DIR")
+          fi
+
+          node visual-review-pages/bin/publish-visual-review-pages.mjs "${args[@]}"
+
+      - name: Upload visual artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: |
+            repo/test-results/
+            repo/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Fail on visual defects
+        if: steps.visual.outcome != 'success' || (steps.manifest.outcome != 'success' && steps.manifest.outcome != 'skipped') || steps.visual-regression.outcome == 'failure'
+        run: exit 1

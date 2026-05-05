@@ -11,6 +11,7 @@ import {
 } from './visual-review-annotations.mjs'
 
 const root = document.getElementById('visual-annotation-root')
+const visualReviewThemeStorageKey = 'visual-review:theme'
 installAgentationImageBoundsGuard()
 
 if (root) {
@@ -34,6 +35,12 @@ function AnnotationApp() {
   const [zoom, setZoom] = useState(100)
   const imageRef = useRef(null)
   const desktop = useDesktopQuery()
+  const [theme, setTheme] = useState(initialVisualReviewTheme)
+
+  useEffect(() => {
+    applyVisualReviewTheme(theme)
+    localStorage.setItem(visualReviewThemeStorageKey, theme)
+  }, [theme])
 
   useEffect(() => {
     loadReportData()
@@ -349,6 +356,14 @@ function AnnotationApp() {
             onMouseDown={stopAnnotationControlEvent}
             onPointerDown={stopAnnotationControlEvent}
           >
+            <button
+              aria-pressed={theme === 'dark'}
+              className="btn theme-toggle"
+              onClick={() => setTheme(toggleVisualReviewTheme(theme))}
+              type="button"
+            >
+              {theme === 'dark' ? 'Light' : 'Dark'}
+            </button>
             <a className="btn" href={reviewPageHref(item)}>Back to queue</a>
             <a className="btn" href={selectedAsset.url} target="_blank" rel="noopener noreferrer">Open raw image</a>
           </div>
@@ -769,6 +784,24 @@ function humanizeSnapshotName(fileName) {
 
 function githubTokenKey(context) {
   return `visual-review:${context.repository}:${context.prNumber}:github-token`
+}
+
+function initialVisualReviewTheme() {
+  const stored = localStorage.getItem(visualReviewThemeStorageKey)
+  if (stored === 'light' || stored === 'dark') return stored
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function applyVisualReviewTheme(theme) {
+  document.documentElement.dataset.theme = theme
+  document.documentElement.style.colorScheme = theme
+}
+
+function toggleVisualReviewTheme(currentTheme) {
+  const nextTheme = currentTheme === 'dark' ? 'light' : 'dark'
+  applyVisualReviewTheme(nextTheme)
+  localStorage.setItem(visualReviewThemeStorageKey, nextTheme)
+  return nextTheme
 }
 
 function statusLabel(variant) {
