@@ -111,3 +111,11 @@ test('publisher CLI creates a reusable PR visual report bundle with annotation a
     rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+test('publisher retries rejected Pages pushes from a fresh remote snapshot', () => {
+  const source = readFileSync(path.join(process.cwd(), 'src', 'visual-review-publisher.mjs'), 'utf8')
+
+  assert.match(source, /push rejected; refreshing/)
+  assert.match(source, /reset', '--hard', 'FETCH_HEAD/)
+  assert.doesNotMatch(source, /pull', '--rebase'/)
+})

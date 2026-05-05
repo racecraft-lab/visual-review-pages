@@ -551,6 +551,35 @@ async function clonePagesBranch({ repository, token, branch }) {
   return pagesDir
 }
 
+async function publishPagesChanges({ addPaths, branch, message, pagesDir, rewrite }) {
+  run('git', ['config', 'user.name', 'github-actions[bot]'], { cwd: pagesDir })
+  run('git', ['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], { cwd: pagesDir })
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if (attempt > 1) {
+      run('git', ['fetch', 'origin', branch], { cwd: pagesDir })
+      run('git', ['reset', '--hard', 'FETCH_HEAD'], { cwd: pagesDir })
+      run('git', ['clean', '-fd'], { cwd: pagesDir })
+      await rewrite()
+    }
+
+    run('git', ['add', ...addPaths], { cwd: pagesDir })
+    const diff = run('git', ['diff', '--cached', '--quiet'], { cwd: pagesDir, allowFailure: true, quiet: true })
+    if (diff.status === 0) {
+      console.log('[visual-pr-pages] no Pages changes to publish')
+      return
+    }
+
+    run('git', ['commit', '-m', message], { cwd: pagesDir })
+    const push = run('git', ['push', 'origin', `HEAD:${branch}`], { cwd: pagesDir, allowFailure: true })
+    if (push.status === 0) return
+
+    console.warn(`[visual-pr-pages] push rejected; refreshing ${branch} and retrying (${attempt}/3)`)
+  }
+
+  throw new Error(`unable to publish Pages changes to ${branch} after 3 attempts`)
+}
+
 async function readRegistry(registryPath) {
   const fallback = { version: 1, updatedAt: null, prs: [] }
   const registry = await readJsonIfPresent(registryPath, fallback)
@@ -1109,82 +1138,79 @@ async function publishReport(options) {
       regVizHref: './reg-viz.html',
     }
 
-    await writeReportBundle({
-      reportFile,
-      reportHtml,
-      extracted: extractedReport,
-      targetDir: runReportDir,
-      manifestDirs: manifestDirsForOptions(options),
-      context: {
-        ...reviewContext,
+    const writeMainPages = async () => {
+      await writeReportBundle({
+        reportFile,
+        reportHtml,
+        extracted: extractedReport,
+        targetDir: runReportDir,
+        manifestDirs: manifestDirsForOptions(options),
+        context: {
+          ...reviewContext,
+          reportHref,
+          reportScope: 'run',
+        },
+      })
+      await writeReportBundle({
+        reportFile,
+        reportHtml,
+        extracted: extractedReport,
+        targetDir: latestReportDir,
+        manifestDirs: manifestDirsForOptions(options),
+        context: {
+          ...reviewContext,
+          reportHref: latestHref,
+          reportScope: 'latest',
+        },
+      })
+
+      const metaPath = path.join(pagesDir, 'visual-main-runs.json')
+      const meta = await readJsonIfPresent(metaPath, {
+        version: 1,
+        reports: [],
+      })
+      meta.version = 1
+      meta.updatedAt = createdAt
+      meta.reports = Array.isArray(meta.reports) ? meta.reports : []
+
+      const reportRecord = {
+        surface,
+        runId,
+        runAttempt,
+        runKey,
+        runUrl,
+        reportKey,
         reportHref,
-        reportScope: 'run',
-      },
-    })
-    await writeReportBundle({
-      reportFile,
-      reportHtml,
-      extracted: extractedReport,
-      targetDir: latestReportDir,
-      manifestDirs: manifestDirsForOptions(options),
-      context: {
-        ...reviewContext,
-        reportHref: latestHref,
-        reportScope: 'latest',
-      },
-    })
+        latestHref,
+        headSha,
+        headRef,
+        baseRef,
+        workflowName,
+        workflowFile: surfaceInfo.workflowFile,
+        surfaceLabel: surfaceInfo.label,
+        sourcePullRequest,
+        createdAt,
+      }
 
-    const metaPath = path.join(pagesDir, 'visual-main-runs.json')
-    const meta = await readJsonIfPresent(metaPath, {
-      version: 1,
-      reports: [],
-    })
-    meta.version = 1
-    meta.updatedAt = createdAt
-    meta.reports = Array.isArray(meta.reports) ? meta.reports : []
+      meta.reports = [
+        reportRecord,
+        ...meta.reports.filter((report) => !(report.surface === surface && report.reportKey === reportKey)),
+      ]
 
-    const reportRecord = {
-      surface,
-      runId,
-      runAttempt,
-      runKey,
-      runUrl,
-      reportKey,
-      reportHref,
-      latestHref,
-      headSha,
-      headRef,
-      baseRef,
-      workflowName,
-      workflowFile: surfaceInfo.workflowFile,
-      surfaceLabel: surfaceInfo.label,
-      sourcePullRequest,
-      createdAt,
+      await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`)
+      await writeFile(path.join(pagesDir, 'index.html'), generateMainIndex(meta, baseUrl, projectName))
     }
 
-    meta.reports = [
-      reportRecord,
-      ...meta.reports.filter((report) => !(report.surface === surface && report.reportKey === reportKey)),
-    ]
-
-    await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`)
-    await writeFile(path.join(pagesDir, 'index.html'), generateMainIndex(meta, baseUrl, projectName))
+    await writeMainPages()
 
     if (!options['pages-dir']) {
-      run('git', ['config', 'user.name', 'github-actions[bot]'], { cwd: pagesDir })
-      run('git', ['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], { cwd: pagesDir })
-      run('git', ['add', surface, 'visual-main-runs.json', 'index.html'], { cwd: pagesDir })
-      const diff = run('git', ['diff', '--cached', '--quiet'], { cwd: pagesDir, allowFailure: true, quiet: true })
-      if (diff.status !== 0) {
-        run('git', ['commit', '-m', `docs: publish main ${surface} visual report`], { cwd: pagesDir })
-        const push = run('git', ['push', 'origin', `HEAD:${branch}`], { cwd: pagesDir, allowFailure: true })
-        if (push.status !== 0) {
-          run('git', ['pull', '--rebase', 'origin', branch], { cwd: pagesDir })
-          run('git', ['push', 'origin', `HEAD:${branch}`], { cwd: pagesDir })
-        }
-      } else {
-        console.log('[visual-pr-pages] no Pages changes to publish')
-      }
+      await publishPagesChanges({
+        addPaths: [surface, 'visual-main-runs.json', 'index.html'],
+        branch,
+        message: `docs: publish main ${surface} visual report`,
+        pagesDir,
+        rewrite: writeMainPages,
+      })
     }
 
     console.log(`[visual-pr-pages] published ${surface} report: ${latestHref}`)
@@ -1224,113 +1250,110 @@ async function publishReport(options) {
     regVizHref: './reg-viz.html',
   }
 
-  await writeReportBundle({
-    reportFile,
-    reportHtml,
-    extracted: extractedReport,
-    targetDir: runReportDir,
-    manifestDirs: manifestDirsForOptions(options),
-    context: {
-      ...reviewContext,
-      reportHref,
-      reportScope: 'run',
-    },
-  })
-  await writeReportBundle({
-    reportFile,
-    reportHtml,
-    extracted: extractedReport,
-    targetDir: latestReportDir,
-    manifestDirs: manifestDirsForOptions(options),
-    context: {
-      ...reviewContext,
-      reportHref: latestHref,
-      reportScope: 'latest',
-    },
-  })
+  const writePrPages = async () => {
+    await writeReportBundle({
+      reportFile,
+      reportHtml,
+      extracted: extractedReport,
+      targetDir: runReportDir,
+      manifestDirs: manifestDirsForOptions(options),
+      context: {
+        ...reviewContext,
+        reportHref,
+        reportScope: 'run',
+      },
+    })
+    await writeReportBundle({
+      reportFile,
+      reportHtml,
+      extracted: extractedReport,
+      targetDir: latestReportDir,
+      manifestDirs: manifestDirsForOptions(options),
+      context: {
+        ...reviewContext,
+        reportHref: latestHref,
+        reportScope: 'latest',
+      },
+    })
 
-  const metaPath = path.join(prRoot, 'visual-runs.json')
-  const meta = await readJsonIfPresent(metaPath, {
-    version: 1,
-    prNumber,
-    prTitle: prPayload.title || `PR #${prNumber}`,
-    prUrl,
-    headRef,
-    baseRef,
-    reports: [],
-  })
-
-  meta.version = 1
-  meta.prNumber = prNumber
-  meta.prTitle = prPayload.title || meta.prTitle || `PR #${prNumber}`
-  meta.prUrl = prUrl
-  meta.headRef = headRef
-  meta.baseRef = baseRef
-  meta.updatedAt = createdAt
-  meta.reports = Array.isArray(meta.reports) ? meta.reports : []
-
-  const reportRecord = {
-    surface,
-    runId,
-    runAttempt,
-    runKey,
-    runUrl,
-    reportHref,
-    latestHref,
-    headSha,
-    headRef,
-    baseRef,
-    workflowName,
-    workflowFile: surfaceInfo.workflowFile,
-    surfaceLabel: surfaceInfo.label,
-    createdAt,
-  }
-
-  meta.reports = [
-    reportRecord,
-    ...meta.reports.filter((report) => !(report.surface === surface && report.runKey === runKey)),
-  ]
-
-  await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`)
-  await writeFile(path.join(prRoot, 'index.html'), generatePrIndex({ meta, baseUrl, projectName }))
-
-  const registryPath = path.join(pagesDir, 'pr', 'visual-reports.json')
-  await mkdir(path.dirname(registryPath), { recursive: true })
-  const registry = await readRegistry(registryPath)
-  const indexHref = `${baseUrl}/pr/${prNumber}/`
-  registry.updatedAt = createdAt
-  registry.prs = [
-    {
+    const metaPath = path.join(prRoot, 'visual-runs.json')
+    const meta = await readJsonIfPresent(metaPath, {
+      version: 1,
       prNumber,
-      prTitle: meta.prTitle,
+      prTitle: prPayload.title || `PR #${prNumber}`,
       prUrl,
-      indexHref,
       headRef,
       baseRef,
-      updatedAt: createdAt,
-      latest: latestMapForReports(meta.reports, baseUrl, prNumber),
-    },
-    ...registry.prs.filter((pr) => String(pr.prNumber) !== prNumber),
-  ]
+      reports: [],
+    })
 
-  await writeFile(registryPath, `${JSON.stringify(registry, null, 2)}\n`)
-  await writeFile(path.join(pagesDir, 'pr', 'index.html'), generateRegistryIndex(registry, baseUrl, projectName))
+    meta.version = 1
+    meta.prNumber = prNumber
+    meta.prTitle = prPayload.title || meta.prTitle || `PR #${prNumber}`
+    meta.prUrl = prUrl
+    meta.headRef = headRef
+    meta.baseRef = baseRef
+    meta.updatedAt = createdAt
+    meta.reports = Array.isArray(meta.reports) ? meta.reports : []
+
+    const reportRecord = {
+      surface,
+      runId,
+      runAttempt,
+      runKey,
+      runUrl,
+      reportHref,
+      latestHref,
+      headSha,
+      headRef,
+      baseRef,
+      workflowName,
+      workflowFile: surfaceInfo.workflowFile,
+      surfaceLabel: surfaceInfo.label,
+      createdAt,
+    }
+
+    meta.reports = [
+      reportRecord,
+      ...meta.reports.filter((report) => !(report.surface === surface && report.runKey === runKey)),
+    ]
+
+    await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`)
+    await writeFile(path.join(prRoot, 'index.html'), generatePrIndex({ meta, baseUrl, projectName }))
+
+    const registryPath = path.join(pagesDir, 'pr', 'visual-reports.json')
+    await mkdir(path.dirname(registryPath), { recursive: true })
+    const registry = await readRegistry(registryPath)
+    const indexHref = `${baseUrl}/pr/${prNumber}/`
+    registry.updatedAt = createdAt
+    registry.prs = [
+      {
+        prNumber,
+        prTitle: meta.prTitle,
+        prUrl,
+        indexHref,
+        headRef,
+        baseRef,
+        updatedAt: createdAt,
+        latest: latestMapForReports(meta.reports, baseUrl, prNumber),
+      },
+      ...registry.prs.filter((pr) => String(pr.prNumber) !== prNumber),
+    ]
+
+    await writeFile(registryPath, `${JSON.stringify(registry, null, 2)}\n`)
+    await writeFile(path.join(pagesDir, 'pr', 'index.html'), generateRegistryIndex(registry, baseUrl, projectName))
+  }
+
+  await writePrPages()
 
   if (!options['pages-dir']) {
-    run('git', ['config', 'user.name', 'github-actions[bot]'], { cwd: pagesDir })
-    run('git', ['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], { cwd: pagesDir })
-    run('git', ['add', 'pr'], { cwd: pagesDir })
-    const diff = run('git', ['diff', '--cached', '--quiet'], { cwd: pagesDir, allowFailure: true, quiet: true })
-    if (diff.status !== 0) {
-      run('git', ['commit', '-m', `docs: publish PR ${prNumber} ${surface} visual report`], { cwd: pagesDir })
-      const push = run('git', ['push', 'origin', `HEAD:${branch}`], { cwd: pagesDir, allowFailure: true })
-      if (push.status !== 0) {
-        run('git', ['pull', '--rebase', 'origin', branch], { cwd: pagesDir })
-        run('git', ['push', 'origin', `HEAD:${branch}`], { cwd: pagesDir })
-      }
-    } else {
-      console.log('[visual-pr-pages] no Pages changes to publish')
-    }
+    await publishPagesChanges({
+      addPaths: ['pr'],
+      branch,
+      message: `docs: publish PR ${prNumber} ${surface} visual report`,
+      pagesDir,
+      rewrite: writePrPages,
+    })
   }
 
   console.log(`[visual-pr-pages] published ${surface} report: ${latestHref}`)
