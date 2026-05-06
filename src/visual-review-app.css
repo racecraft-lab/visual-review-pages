@@ -673,7 +673,8 @@ a {
 
 .image-panel,
 .solo-image,
-.overlay-frame {
+.overlay-frame,
+.heatmap-frame {
   background: var(--control);
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -708,6 +709,46 @@ a {
   overflow: hidden;
 }
 
+.heatmap-toggle.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.heatmap-frame {
+  position: relative;
+  display: block;
+  max-width: min(100%, 1200px);
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.heatmap-frame > img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  margin: 0;
+}
+
+.image-panel .heatmap-frame,
+.overlay-top .heatmap-frame,
+.blink-frame > .heatmap-frame {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  max-width: none;
+}
+
+.heatmap-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+}
+
 .overlay-frame {
   position: relative;
   max-width: 1200px;
@@ -728,10 +769,17 @@ a {
   border-right: 2px solid var(--accent);
 }
 
-.blink-frame img + img {
+.blink-frame img + img,
+.blink-frame img + .heatmap-frame {
   position: absolute;
   inset: 0;
   animation: visualBlink 1.1s steps(1) infinite;
+}
+
+.blink-frame > .heatmap-frame {
+  width: 100%;
+  max-width: none;
+  margin: 0;
 }
 
 @keyframes visualBlink {

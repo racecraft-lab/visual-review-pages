@@ -100,6 +100,7 @@ test('publisher CLI creates a reusable PR visual report bundle with annotation a
     assert.equal(existsSync(path.join(latestDir, 'visual-review-app.js')), true)
     assert.equal(existsSync(path.join(latestDir, 'visual-review-state.mjs')), true)
     assert.equal(existsSync(path.join(latestDir, 'visual-review-annotations.mjs')), true)
+    assert.equal(existsSync(path.join(latestDir, 'visual-review-heatmap.mjs')), true)
     assert.equal(existsSync(path.join(latestDir, 'visual-annotation-app.js')), true)
     assert.equal(existsSync(path.join(latestDir, 'annotate.html')), true)
     assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', snapshot)), true)

@@ -607,6 +607,10 @@ async function writeReportBundle({ reportFile, reportHtml, extracted, targetDir,
     await readFile(scriptAssetUrl('visual-review-annotations.mjs'), 'utf8')
   )
   await writeFile(
+    path.join(targetDir, 'visual-review-heatmap.mjs'),
+    await readFile(scriptAssetUrl('visual-review-heatmap.mjs'), 'utf8')
+  )
+  await writeFile(
     path.join(targetDir, 'visual-annotation-app.js'),
     await readFile(distAssetUrl('visual-annotation-app.js'), 'utf8')
   )
@@ -1503,6 +1507,7 @@ async function publishReport(options) {
   const baselineState = await readJsonIfPresent(path.join(pagesDir, 'visual-baseline-state.json'), null)
   const baselineCandidatePayload = await enrichReportPayload(extractedReport.payload, reportDir, manifestDirs)
   const baselineFilteredPayload = await applyBaselineReviewStateToPayload({
+    baselineReportDir: path.join(pagesDir, surface, 'latest'),
     baselineState,
     payload: baselineCandidatePayload,
     reportDir,

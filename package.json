@@ -17,7 +17,8 @@
   },
   "scripts": {
     "build": "vite build",
-    "check": "npm run build && node --check src/visual-review-app.js && node --check src/visual-review-state.mjs && node --check src/visual-review-annotations.mjs && node --check src/visual-review-baseline.mjs && node --check src/visual-review-producer.mjs && node --check src/visual-review-publisher.mjs && node --check src/visual-review-approval.mjs && node --check bin/publish-visual-review-pages.mjs && node --check bin/check-visual-review-approval.mjs && node --test"
+    "check": "npm run build && node --check src/visual-review-app.js && node --check src/visual-review-state.mjs && node --check src/visual-review-annotations.mjs && node --check src/visual-review-baseline.mjs && node --check src/visual-review-heatmap.mjs && node --check src/visual-review-producer.mjs && node --check src/visual-review-publisher.mjs && node --check src/visual-review-approval.mjs && node --check bin/publish-visual-review-pages.mjs && node --check bin/check-visual-review-approval.mjs && node --test test/*.test.mjs",
+    "test:playwright": "playwright test"
   },
   "dependencies": {
     "agentation": "^3.0.2",
@@ -25,6 +26,7 @@
     "react-dom": "^19.2.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@vitejs/plugin-react": "^6.0.1",
     "vite": "^8.0.10"
   }

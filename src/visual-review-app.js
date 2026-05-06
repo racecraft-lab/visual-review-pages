@@ -9,8 +9,12 @@ import {
   VISUAL_REVIEW_STATUS_CONTEXT,
 } from './visual-review-state.mjs'
 import { annotationPageHref } from './visual-review-annotations.mjs'
+import {
+  DEFAULT_HEAT_MAP_THRESHOLD,
+  writeHeatMapPixels,
+} from './visual-review-heatmap.mjs'
 
-/* global document, window, localStorage, history, sessionStorage, URLSearchParams */
+/* global document, window, localStorage, history, sessionStorage, URL, URLSearchParams */
 (() => {
   const dataElement = document.getElementById('visual-review-data')
   const root = document.getElementById('visual-review-root')
@@ -30,6 +34,7 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
     githubToken: sessionStorage.getItem(githubTokenKey()) || '',
     githubUser: '',
     group: 'all',
+    heatMaps: readHeatMaps(),
     inlineCommentMessage: '',
     inlineCommentState: 'idle',
     mode: localStorage.getItem(storageKey('mode')) || 'side-by-side',
@@ -140,6 +145,18 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
     }
   }
 
+  function readHeatMaps() {
+    try {
+      return JSON.parse(localStorage.getItem(storageKey('heat-maps')) || '{}')
+    } catch {
+      return {}
+    }
+  }
+
+  function saveHeatMaps() {
+    localStorage.setItem(storageKey('heat-maps'), JSON.stringify(state.heatMaps))
+  }
+
   function saveReviewComments() {
     localStorage.setItem(storageKey('review-comments'), JSON.stringify(state.reviewComments))
   }
@@ -178,8 +195,23 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
       actual: joinUrl(payload.actualDir, fileName),
       expected: joinUrl(payload.expectedDir, fileName),
       diff: joinUrl(payload.diffDir, diffFileName(fileName)),
+      baselineReference: normalizeBaselineReference(item.baselineReference),
       review,
       searchText: itemSearchText({ raw, variant, group, review }),
+    }
+  }
+
+  function normalizeBaselineReference(value) {
+    if (!value || typeof value !== 'object') return null
+    return {
+      baselineHeadSha: stringOr(value.baselineHeadSha),
+      baselineReportHref: stringOr(value.baselineReportHref),
+      imageHref: stringOr(value.imageHref),
+      imageSha256: stringOr(value.imageSha256),
+      sourcePrNumber: stringOr(value.sourcePrNumber),
+      sourcePrUrl: stringOr(value.sourcePrUrl),
+      sourceTestKey: stringOr(value.sourceTestKey),
+      sourceVariant: stringOr(value.sourceVariant),
     }
   }
 
@@ -418,6 +450,7 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
     bindEvents()
     applyZoomState()
     applyOverlayState()
+    renderHeatMaps()
   }
 
   function renderReviewBrief(item, currentCounts) {
@@ -523,14 +556,15 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
 
   function renderReviewLinks(item, target) {
     const links = []
+    const baselineHref = baselineImageHref(item)
     if (target) {
       links.push(`<a class="btn" href="${escapeAttribute(sourceFileHref(target))}" target="_blank" rel="noopener noreferrer" data-source-link>Open source file</a>`)
     }
     if (item.actual && item.variant !== 'deleted') {
       links.push(`<a class="btn" href="${escapeAttribute(annotationPageHref({ asset: 'current', basePath: window.location.href, itemId: item.id }))}" target="_blank" rel="noopener noreferrer" data-annotation-link>Open current image</a>`)
     }
-    if (item.expected && item.variant !== 'new') {
-      links.push(`<a class="btn" href="${escapeAttribute(item.expected)}" target="_blank" rel="noopener noreferrer">Open baseline image</a>`)
+    if (baselineHref) {
+      links.push(`<a class="btn" href="${escapeAttribute(baselineHref)}" target="_blank" rel="noopener noreferrer">Open baseline image</a>`)
     }
     if (item.diff && item.variant === 'changed') {
       links.push(`<a class="btn" href="${escapeAttribute(item.diff)}" target="_blank" rel="noopener noreferrer">Open diff image</a>`)
@@ -812,6 +846,7 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
                 ${modeButton('blink', 'Blink')}
               </div>
             ` : ''}
+            ${heatMapToggle(item)}
             <label class="range-row">Zoom <input type="range" min="50" max="200" step="1" value="${state.zoom}" data-action="zoom" /> <span data-zoom-value>${state.zoom}%</span></label>
           </div>
         </div>
@@ -828,14 +863,32 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
     return `<button type="button" class="${state.mode === mode ? 'active' : ''}" data-mode="${escapeAttribute(mode)}">${escapeHtml(label)}</button>`
   }
 
+  function heatMapToggle(item) {
+    const enabled = canHeatMap(item)
+    const active = enabled && heatMapEnabled(item)
+    return `
+      <button
+        class="btn heatmap-toggle ${active ? 'active' : ''}"
+        type="button"
+        data-action="toggle-heat-map"
+        aria-pressed="${active ? 'true' : 'false'}"
+        ${enabled ? '' : 'disabled'}
+        title="${escapeAttribute(enabled ? 'Overlay changed pixels on the current screenshot' : 'Heat map needs baseline and current screenshots')}"
+      >Heat map</button>
+    `
+  }
+
   function renderImageMode(item) {
     if (item.variant === 'new' || item.variant === 'passed') {
-      return `<img class="solo-image" src="${escapeAttribute(item.actual)}" alt="Current screenshot for ${escapeAttribute(item.raw)}" />`
+      return renderCurrentImage(item, `Current screenshot for ${item.raw}`, 'solo-image')
     }
     if (item.variant === 'deleted') {
-      return `<img class="solo-image" src="${escapeAttribute(item.expected)}" alt="Baseline screenshot for ${escapeAttribute(item.raw)}" />`
+      return `<img class="solo-image" src="${escapeAttribute(baselineImageHref(item) || item.expected)}" alt="Baseline screenshot for ${escapeAttribute(item.raw)}" />`
     }
     if (state.mode === 'diff') {
+      if (heatMapEnabled(item)) {
+        return renderCurrentImage(item, `Current screenshot with heat map for ${item.raw}`, 'solo-image')
+      }
       return `<img class="solo-image" src="${escapeAttribute(item.diff)}" alt="Diff highlighter for ${escapeAttribute(item.raw)}" />`
     }
     if (state.mode === 'overlay') {
@@ -843,9 +896,9 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
         <div class="image-grid">
           <label class="range-row">Reveal current <input type="range" min="0" max="100" value="${state.overlay}" data-action="overlay" /> <span data-overlay-value>${state.overlay}%</span></label>
           <div class="overlay-frame">
-            <img src="${escapeAttribute(item.expected)}" alt="Baseline screenshot for ${escapeAttribute(item.raw)}" />
+            <img src="${escapeAttribute(baselineImageHref(item))}" alt="Baseline screenshot for ${escapeAttribute(item.raw)}" />
             <div class="overlay-top" data-overlay-top style="width: ${state.overlay}%">
-              <img src="${escapeAttribute(item.actual)}" alt="Current screenshot for ${escapeAttribute(item.raw)}" />
+              ${renderCurrentImage(item, `Current screenshot for ${item.raw}`)}
             </div>
           </div>
         </div>
@@ -854,8 +907,8 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
     if (state.mode === 'blink') {
       return `
         <div class="overlay-frame blink-frame">
-          <img src="${escapeAttribute(item.expected)}" alt="Baseline screenshot for ${escapeAttribute(item.raw)}" />
-          <img src="${escapeAttribute(item.actual)}" alt="Current screenshot for ${escapeAttribute(item.raw)}" />
+          <img src="${escapeAttribute(baselineImageHref(item))}" alt="Baseline screenshot for ${escapeAttribute(item.raw)}" />
+          ${renderCurrentImage(item, `Current screenshot for ${item.raw}`)}
         </div>
       `
     }
@@ -863,14 +916,74 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
       <div class="image-grid two-up">
         <div class="image-panel">
           <h3>Baseline · ${escapeHtml(context.baseRef)}</h3>
-          <img src="${escapeAttribute(item.expected)}" alt="Baseline screenshot for ${escapeAttribute(item.raw)}" />
+          <img src="${escapeAttribute(baselineImageHref(item))}" alt="Baseline screenshot for ${escapeAttribute(item.raw)}" />
         </div>
         <div class="image-panel">
           <h3>Current · ${escapeHtml(context.headRef)}</h3>
-          <img src="${escapeAttribute(item.actual)}" alt="Current screenshot for ${escapeAttribute(item.raw)}" />
+          ${renderCurrentImage(item, `Current screenshot for ${item.raw}`)}
         </div>
       </div>
     `
+  }
+
+  function renderCurrentImage(item, alt, className = '') {
+    const heatMapActive = heatMapEnabled(item)
+    const image = `<img class="${escapeAttribute(className)}" src="${escapeAttribute(item.actual)}" alt="${escapeAttribute(alt)}" />`
+    if (!heatMapActive) return image
+
+    return `
+      <div class="heatmap-frame ${className ? escapeAttribute(className) : ''}" data-heat-map-frame>
+        <img src="${escapeAttribute(item.actual)}" alt="${escapeAttribute(alt)}" />
+        <canvas
+          class="heatmap-canvas"
+          data-heat-map-canvas
+          data-baseline-src="${escapeAttribute(baselineImageHref(item))}"
+          data-current-src="${escapeAttribute(item.actual)}"
+          data-threshold="${DEFAULT_HEAT_MAP_THRESHOLD}"
+          aria-hidden="true"
+        ></canvas>
+      </div>
+    `
+  }
+
+  function baselineImageHref(item) {
+    const href = item?.baselineReference?.imageHref || (item?.variant === 'changed' || item?.variant === 'deleted' ? item.expected : '')
+    return localReportAssetHref(href)
+  }
+
+  function localReportAssetHref(href) {
+    const value = stringOr(href)
+    if (!value) return ''
+    try {
+      const target = new URL(value, window.location.href)
+      if (target.origin === window.location.origin || !context.baseUrl) return target.href
+      const base = new URL(context.baseUrl, window.location.href)
+      if (target.origin !== base.origin) return target.href
+      const basePath = base.pathname.replace(/\/+$/, '')
+      const localPath = basePath
+        ? (target.pathname.startsWith(`${basePath}/`) ? target.pathname.slice(basePath.length) : '')
+        : target.pathname
+      if (!localPath.startsWith('/')) return target.href
+
+      // Local Playwright runs often mirror the GitHub Pages tree at localhost.
+      return `${window.location.origin}${localPath}${target.search}${target.hash}`
+    } catch {
+      return value
+    }
+  }
+
+  function canHeatMap(item) {
+    return Boolean(
+      item &&
+      item.variant !== 'deleted' &&
+      item.variant !== 'passed' &&
+      item.actual &&
+      baselineImageHref(item)
+    )
+  }
+
+  function heatMapEnabled(item) {
+    return canHeatMap(item) && state.heatMaps[item.id] === true
   }
 
   function renderContext(item) {
@@ -927,6 +1040,7 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
       persistViewState()
       applyOverlayState()
     })
+    root.querySelector('[data-action="toggle-heat-map"]')?.addEventListener('click', toggleHeatMap)
     root.querySelector('[data-action="review-comment"]')?.addEventListener('input', updateReviewComment)
     root.querySelector('[data-action="post-inline-comment"]')?.addEventListener('click', postInlineReviewComment)
     root.querySelector('[data-action="toggle-theme"]')?.addEventListener('click', toggleVisualReviewTheme)
@@ -955,6 +1069,94 @@ import { annotationPageHref } from './visual-review-annotations.mjs'
     const overlayValue = root.querySelector('[data-overlay-value]')
     if (overlayTop) overlayTop.style.width = `${state.overlay}%`
     if (overlayValue) overlayValue.textContent = `${state.overlay}%`
+  }
+
+  function toggleHeatMap() {
+    const current = activeItem()
+    if (!canHeatMap(current)) return
+    state.heatMaps[current.id] = !state.heatMaps[current.id]
+    saveHeatMaps()
+    render()
+  }
+
+  function renderHeatMaps() {
+    root.querySelectorAll('[data-heat-map-canvas]').forEach((canvas) => {
+      drawHeatMapCanvas(canvas)
+    })
+  }
+
+  async function drawHeatMapCanvas(canvas) {
+    const frame = canvas.closest('[data-heat-map-frame]')
+    frame?.setAttribute('data-heat-map-state', 'loading')
+    try {
+      const [baseline, current] = await Promise.all([
+        loadImage(canvas.dataset.baselineSrc),
+        loadImage(canvas.dataset.currentSrc),
+      ])
+      if (!canvas.isConnected) return
+      if (
+        !baseline.naturalWidth ||
+        !current.naturalWidth ||
+        baseline.naturalWidth !== current.naturalWidth ||
+        baseline.naturalHeight !== current.naturalHeight
+      ) {
+        frame?.setAttribute('data-heat-map-state', 'mismatch')
+        return
+      }
+
+      const width = current.naturalWidth
+      const height = current.naturalHeight
+      const baselineCanvas = workCanvas(width, height)
+      const currentCanvas = workCanvas(width, height)
+      const heatMapContext = canvas.getContext('2d')
+      const baselineContext = baselineCanvas.getContext('2d')
+      const currentContext = currentCanvas.getContext('2d')
+      if (!heatMapContext || !baselineContext || !currentContext) return
+
+      baselineContext.drawImage(baseline, 0, 0, width, height)
+      currentContext.drawImage(current, 0, 0, width, height)
+      const baselineData = baselineContext.getImageData(0, 0, width, height)
+      const currentData = currentContext.getImageData(0, 0, width, height)
+      const heatMapData = heatMapContext.createImageData(width, height)
+      const summary = writeHeatMapPixels({
+        baseline: baselineData.data,
+        current: currentData.data,
+        output: heatMapData.data,
+        threshold: Number(canvas.dataset.threshold || DEFAULT_HEAT_MAP_THRESHOLD),
+      })
+
+      canvas.width = width
+      canvas.height = height
+      heatMapContext.putImageData(heatMapData, 0, 0)
+      frame?.setAttribute('data-heat-map-state', summary.changedPixels > 0 ? 'ready' : 'empty')
+    } catch {
+      frame?.setAttribute('data-heat-map-state', 'error')
+    }
+  }
+
+  function workCanvas(width, height) {
+    if (typeof window.OffscreenCanvas === 'function') {
+      return new window.OffscreenCanvas(width, height)
+    }
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    return canvas
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const image = new Image()
+      try {
+        const url = new URL(src, window.location.href)
+        if (url.origin !== window.location.origin) image.crossOrigin = 'anonymous'
+      } catch {
+        // Keep browser-default loading for relative paths that URL cannot parse.
+      }
+      image.onload = () => resolve(image)
+      image.onerror = () => reject(new Error(`Unable to load heat map image: ${src}`))
+      image.src = src
+    })
   }
 
   function updateReviewComment(event) {

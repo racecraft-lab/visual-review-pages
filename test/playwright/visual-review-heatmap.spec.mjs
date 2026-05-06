@@ -1,0 +1,289 @@
+import { test, expect } from '@playwright/test'
+import { createServer } from 'node:http'
+import { mkdtemp, mkdir, cp, rm, writeFile, readFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import zlib from 'node:zlib'
+
+const repoRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
+const reportPath = 'pr/28/playwright/latest'
+const baselinePath = 'playwright/latest'
+const fixtureHeight = 90
+const fixtureWidth = 160
+const screenshotFile = 'heatmap-ready.png'
+
+test('draws a heat map from a production baseline URL served by local Playwright', async ({ page }, testInfo) => {
+  const fixture = await createHeatMapFixture()
+
+  try {
+    await page.goto(`${fixture.url}/${reportPath}/`)
+    const heatMapToggle = page.getByRole('button', { exact: true, name: 'Heat map' })
+    await expect(heatMapToggle).toBeEnabled()
+    await heatMapToggle.click()
+    await expect(page.locator('[data-heat-map-frame]')).toHaveAttribute('data-heat-map-state', 'ready')
+
+    const canvasSummary = await page.locator('[data-heat-map-canvas]').evaluate((canvas) => {
+      const context = canvas.getContext('2d')
+      const changed = context.getImageData(72, 44, 1, 1).data
+      const tiny = context.getImageData(12, 12, 1, 1).data
+      const unchanged = context.getImageData(0, 0, 1, 1).data
+      return {
+        baselineSrc: canvas.dataset.baselineSrc,
+        changed: Array.from(changed),
+        height: canvas.height,
+        state: canvas.closest('[data-heat-map-frame]')?.dataset.heatMapState,
+        tiny: Array.from(tiny),
+        unchanged: Array.from(unchanged),
+        width: canvas.width,
+      }
+    })
+
+    expect(canvasSummary.state).toBe('ready')
+    expect(canvasSummary.width).toBe(fixtureWidth)
+    expect(canvasSummary.height).toBe(fixtureHeight)
+    expect(canvasSummary.baselineSrc).toBe(`${fixture.url}/${baselinePath}/__reg__/1_actual/heatmap/changed.png`)
+    expect(canvasSummary.changed[0]).toBe(255)
+    expect(canvasSummary.changed[3]).toBeGreaterThan(0)
+    expect(canvasSummary.tiny[3]).toBe(0)
+    expect(canvasSummary.unchanged[3]).toBe(0)
+
+    await page.locator('[data-heat-map-frame]').screenshot({ path: testInfo.outputPath(screenshotFile) })
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('keeps the heat map toggle scoped to the active image', async ({ page }) => {
+  const fixture = await createHeatMapFixture()
+
+  try {
+    await page.goto(`${fixture.url}/${reportPath}/`)
+    await page.getByRole('button', { exact: true, name: 'Heat map' }).click()
+    await expect(page.locator('[data-heat-map-frame]')).toHaveAttribute('data-heat-map-state', 'ready')
+
+    await page.getByRole('button', { name: /^All / }).click()
+    await page.getByRole('button', { name: /Unchanged passed screen/ }).click()
+    await expect(page.getByRole('button', { exact: true, name: 'Heat map' })).toBeDisabled()
+    await expect(page.locator('[data-heat-map-canvas]')).toHaveCount(0)
+
+    await page.getByRole('button', { name: /Heat map changed screen/ }).click()
+    await expect(page.getByRole('button', { exact: true, name: 'Heat map' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('[data-heat-map-frame]')).toHaveAttribute('data-heat-map-state', 'ready')
+  } finally {
+    await fixture.close()
+  }
+})
+
+async function createHeatMapFixture() {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'visual-review-heatmap-'))
+  const reportRoot = path.join(root, reportPath)
+  const baselineRoot = path.join(root, baselinePath)
+  await mkdir(reportRoot, { recursive: true })
+  await mkdir(baselineRoot, { recursive: true })
+  await Promise.all([
+    copyAppAsset('visual-review-app.js', reportRoot),
+    copyAppAsset('visual-review-app.css', reportRoot),
+    copyAppAsset('visual-review-annotations.mjs', reportRoot),
+    copyAppAsset('visual-review-heatmap.mjs', reportRoot),
+    copyAppAsset('visual-review-state.mjs', reportRoot),
+  ])
+
+  await writeFixtureImages({ baselineRoot, reportRoot })
+  await writeFile(path.join(reportRoot, 'index.html'), renderReportHtml(), 'utf8')
+  const server = await serveStatic(root)
+  return {
+    url: server.url,
+    close: async () => {
+      await server.close()
+      await rm(root, { force: true, recursive: true })
+    },
+  }
+}
+
+async function copyAppAsset(fileName, reportRoot) {
+  await cp(path.join(repoRoot, 'src', fileName), path.join(reportRoot, fileName))
+}
+
+async function writeFixtureImages({ baselineRoot, reportRoot }) {
+  const baselineImage = pngBuffer(fixtureWidth, fixtureHeight, () => [48, 48, 48, 255])
+  const changedImage = pngBuffer(fixtureWidth, fixtureHeight, (x, y) => {
+    if (x >= 48 && x <= 104 && y >= 28 && y <= 62) return [255, 20, 20, 255]
+    if (x === 12 && y === 12) return [55, 55, 55, 255]
+    return [48, 48, 48, 255]
+  })
+  const passedImage = pngBuffer(fixtureWidth, fixtureHeight, () => [80, 100, 140, 255])
+  await Promise.all([
+    writeImage(path.join(baselineRoot, '__reg__/1_actual/heatmap/changed.png'), baselineImage),
+    writeImage(path.join(reportRoot, '__reg__/1_actual/heatmap/changed.png'), changedImage),
+    writeImage(path.join(reportRoot, '__reg__/1_actual/heatmap/passed.png'), passedImage),
+  ])
+}
+
+async function writeImage(filePath, buffer) {
+  await mkdir(path.dirname(filePath), { recursive: true })
+  await writeFile(filePath, buffer)
+}
+
+function renderReportHtml() {
+  const data = {
+    context: {
+      baseRef: 'main',
+      baseUrl: 'https://example.invalid/mission-control',
+      headRef: 'feature/heatmap',
+      headSha: 'abc1234',
+      prIndexHref: '#',
+      prNumber: 28,
+      prTitle: 'Heat map Playwright QA',
+      repository: 'racecraft-lab/mission-control',
+      runId: 'latest',
+      runKey: 'latest',
+      surface: 'playwright',
+      surfaceLabel: 'Playwright',
+    },
+    payload: {
+      actualDir: './__reg__/1_actual',
+      diffDir: './__reg__/0_diff',
+      expectedDir: './__reg__/2_expected',
+      newItems: [
+        {
+          raw: 'heatmap/changed.png',
+          encoded: 'heatmap/changed.png',
+          baselineReference: {
+            baselineReportHref: 'https://example.invalid/mission-control/playwright/latest/',
+            imageHref: 'https://example.invalid/mission-control/playwright/latest/__reg__/1_actual/heatmap/changed.png',
+          },
+          review: {
+            domain: 'heatmap',
+            sourceFile: 'tests/heatmap.spec.ts:10',
+            title: 'Heat map changed screen',
+          },
+        },
+      ],
+      passedItems: [
+        {
+          raw: 'heatmap/passed.png',
+          encoded: 'heatmap/passed.png',
+          review: {
+            domain: 'heatmap',
+            sourceFile: 'tests/heatmap.spec.ts:30',
+            title: 'Unchanged passed screen',
+          },
+        },
+      ],
+    },
+  }
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Visual Review Heat Map Fixture</title>
+    <link rel="stylesheet" href="./visual-review-app.css" />
+  </head>
+  <body>
+    <div id="visual-review-root"></div>
+    <script id="visual-review-data" type="application/json">${escapeJsonForScript(data)}</script>
+    <script type="module" src="./visual-review-app.js"></script>
+  </body>
+</html>
+`
+}
+
+function escapeJsonForScript(value) {
+  return JSON.stringify(value).replace(/</g, '\\u003c')
+}
+
+function pngBuffer(width, height, colorForPixel) {
+  const raw = Buffer.alloc((width * 4 + 1) * height)
+  for (let y = 0; y < height; y += 1) {
+    const row = y * (width * 4 + 1)
+    raw[row] = 0
+    for (let x = 0; x < width; x += 1) {
+      const pixel = colorForPixel(x, y)
+      const offset = row + 1 + x * 4
+      raw[offset] = pixel[0]
+      raw[offset + 1] = pixel[1]
+      raw[offset + 2] = pixel[2]
+      raw[offset + 3] = pixel[3]
+    }
+  }
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', Buffer.concat([
+      uint32(width),
+      uint32(height),
+      Buffer.from([8, 6, 0, 0, 0]),
+    ])),
+    pngChunk('IDAT', zlib.deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ])
+}
+
+function pngChunk(type, data) {
+  const typeBuffer = Buffer.from(type)
+  const crcInput = Buffer.concat([typeBuffer, data])
+  return Buffer.concat([
+    uint32(data.length),
+    typeBuffer,
+    data,
+    uint32(crc32(crcInput)),
+  ])
+}
+
+function uint32(value) {
+  const buffer = Buffer.alloc(4)
+  buffer.writeUInt32BE(value >>> 0)
+  return buffer
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff
+  for (const byte of buffer) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+async function serveStatic(root) {
+  const server = createServer(async (request, response) => {
+    try {
+      const url = new URL(request.url || '/', 'http://127.0.0.1')
+      const pathName = decodeURIComponent(url.pathname)
+      const requested = pathName.endsWith('/') ? `${pathName}index.html` : pathName
+      const filePath = path.join(root, requested)
+      const relative = path.relative(root, filePath)
+      if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        response.writeHead(403)
+        response.end('Forbidden')
+        return
+      }
+      const body = await readFile(filePath)
+      response.writeHead(200, { 'content-type': contentType(filePath) })
+      response.end(body)
+    } catch {
+      response.writeHead(404)
+      response.end('Not found')
+    }
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve())
+    }),
+  }
+}
+
+function contentType(filePath) {
+  if (filePath.endsWith('.html')) return 'text/html; charset=utf-8'
+  if (filePath.endsWith('.css')) return 'text/css; charset=utf-8'
+  if (filePath.endsWith('.js') || filePath.endsWith('.mjs')) return 'text/javascript; charset=utf-8'
+  if (filePath.endsWith('.png')) return 'image/png'
+  return 'application/octet-stream'
+}

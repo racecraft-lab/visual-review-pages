@@ -51,6 +51,7 @@ export const MISSION_CONTROL_VISUAL_REVIEW_PATHS = [
   'scripts/verify-visual-manifest.mjs',
   'scripts/visual-review-app.css',
   'scripts/visual-review-app.js',
+  'scripts/visual-review-heatmap.mjs',
   'scripts/visual-review-producer.mjs',
   'scripts/visual-review-state.mjs',
   'scripts/write-storybook-visual-manifests.mjs',

@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { inflateSync } from 'node:zlib'
 
 export const VISUAL_REVIEW_BASELINE_SCHEMA = 'visual-review-pages.visual-baseline-state.v1'
 
 const BASELINE_REVIEWABLE_VARIANTS = ['changed', 'new']
+const BASELINE_VISUAL_DIFF_THRESHOLD = 0.01
 
 export async function buildSurfaceBaselineReviewState({
   context = {},
@@ -99,17 +101,25 @@ export function mergeSurfaceBaselineReviewState(existingState, surfaceState) {
 }
 
 export async function applyBaselineReviewStateToPayload({
+  baselineReportDir,
   baselineState,
   payload,
   reportDir,
   surface,
+  visualDiffThreshold = BASELINE_VISUAL_DIFF_THRESHOLD,
 }) {
   const surfaceBaseline = baselineState?.surfaces?.[surface]
   if (!surfaceBaseline?.snapshots || typeof surfaceBaseline.snapshots !== 'object') {
     return payload
   }
 
-  const approvalPlan = await baselineApprovalPlan({ baseline: surfaceBaseline, payload, reportDir })
+  const approvalPlan = await baselineApprovalPlan({
+    baseline: surfaceBaseline,
+    baselineReportDir,
+    payload,
+    reportDir,
+    visualDiffThreshold,
+  })
   const baselineApprovedItems = []
   const failedItems = []
   for (const item of reportItems(payload, 'failedItems')) {
@@ -127,7 +137,7 @@ export async function applyBaselineReviewStateToPayload({
     if (baselineEntry) {
       baselineApprovedItems.push(baselinePassedItem(surfaceBaseline, item, 'new', baselineEntry))
     } else {
-      newItems.push(item)
+      newItems.push(itemWithBaselineReference(surfaceBaseline, payload, item))
     }
   }
 
@@ -155,7 +165,30 @@ function baselinePassedItem(baseline, item, variant, baselineEntry = null) {
       sourcePrUrl: entry.sourcePrUrl || '',
       sourceTestKey: entry.testKey || '',
       sourceVariant: entry.sourceVariant || variant,
+      matchKind: entry.matchKind || 'hash',
     },
+  }
+}
+
+function itemWithBaselineReference(baseline, payload, item) {
+  const reference = baselineReferenceForItem(baseline, payload, item)
+  return reference ? { ...item, baselineReference: reference } : item
+}
+
+function baselineReferenceForItem(baseline, payload, item) {
+  const entry = baselineEntryForItem(baseline, item)
+  const fileName = itemFileName(item)
+  if (!entry || !fileName) return null
+
+  return {
+    baselineHeadSha: baseline.headSha || '',
+    baselineReportHref: baseline.reportHref || '',
+    imageHref: joinHref(baseline.reportHref, payload.actualDir || '', fileName),
+    imageSha256: entry.imageSha256 || '',
+    sourcePrNumber: entry.sourcePrNumber || '',
+    sourcePrUrl: entry.sourcePrUrl || '',
+    sourceTestKey: entry.testKey || '',
+    sourceVariant: entry.sourceVariant || 'new',
   }
 }
 
@@ -170,7 +203,13 @@ function baselineEntryForItem(baseline, item) {
   return fileName ? baseline.snapshots?.[fileName] || null : null
 }
 
-async function baselineApprovalPlan({ baseline, payload, reportDir }) {
+async function baselineApprovalPlan({
+  baseline,
+  baselineReportDir,
+  payload,
+  reportDir,
+  visualDiffThreshold,
+}) {
   const plan = new Map()
   const candidates = [
     ...reportItems(payload, 'failedItems').map((item) => ({ item, variant: 'changed' })),
@@ -185,8 +224,17 @@ async function baselineApprovalPlan({ baseline, payload, reportDir }) {
     const identity = itemTestIdentity(candidate.item)
     if (!identity) {
       const entry = baseline.snapshots?.[fileName]
-      if (await entryMatchesImage({ entry, fileName, payload, reportDir })) {
-        plan.set(itemApprovalKey(candidate.item, candidate.variant), entry)
+      const match = await matchingBaselineEntry({
+        allowVisualTolerance: candidate.variant === 'new',
+        baselineReportDir,
+        entry,
+        fileName,
+        payload,
+        reportDir,
+        visualDiffThreshold,
+      })
+      if (match) {
+        plan.set(itemApprovalKey(candidate.item, candidate.variant), match)
       }
       continue
     }
@@ -203,11 +251,20 @@ async function baselineApprovalPlan({ baseline, payload, reportDir }) {
     const matches = []
     for (const candidate of group) {
       const entry = testBaselineEntryForFile(testBaseline, candidate.fileName)
-      if (!await entryMatchesImage({ entry, fileName: candidate.fileName, payload, reportDir })) {
+      const match = await matchingBaselineEntry({
+        allowVisualTolerance: candidate.variant === 'new',
+        baselineReportDir,
+        entry,
+        fileName: candidate.fileName,
+        payload,
+        reportDir,
+        visualDiffThreshold,
+      })
+      if (!match) {
         matches.length = 0
         break
       }
-      matches.push({ ...candidate, entry })
+      matches.push({ ...candidate, entry: match })
     }
 
     for (const match of matches) {
@@ -218,11 +275,29 @@ async function baselineApprovalPlan({ baseline, payload, reportDir }) {
   return plan
 }
 
-async function entryMatchesImage({ entry, fileName, payload, reportDir }) {
-  if (entry?.decision !== 'approved' || !entry.imageSha256) return false
+async function matchingBaselineEntry({
+  allowVisualTolerance = false,
+  baselineReportDir,
+  entry,
+  fileName,
+  payload,
+  reportDir,
+  visualDiffThreshold,
+}) {
+  if (entry?.decision !== 'approved' || !entry.imageSha256) return null
 
-  const currentSha = await hashReportImage({ fileName, payload, reportDir })
-  return Boolean(currentSha && currentSha === entry.imageSha256)
+  const currentPath = reportImagePath({ fileName, payload, reportDir })
+  const currentSha = await hashFile(currentPath)
+  if (currentSha && currentSha === entry.imageSha256) return { ...entry, matchKind: 'hash' }
+  if (!allowVisualTolerance || !baselineReportDir || !currentSha) return null
+
+  const baselinePath = reportImagePath({ fileName, payload, reportDir: baselineReportDir })
+  const diffRatio = pngPixelDiffRatio(currentPath, baselinePath)
+  if (diffRatio !== null && diffRatio <= visualDiffThreshold) {
+    return { ...entry, matchKind: 'visual-tolerance', visualDiffRatio: diffRatio }
+  }
+
+  return null
 }
 
 function testBaselineEntryForFile(testBaseline, fileName) {
@@ -255,12 +330,116 @@ function baselineCandidateItems(payload) {
 }
 
 async function hashReportImage({ fileName, payload, reportDir }) {
-  const actualDir = path.resolve(reportDir, payload.actualDir || '')
-  const imagePath = resolveInside(actualDir, fileName)
+  return hashFile(reportImagePath({ fileName, payload, reportDir }))
+}
+
+async function hashFile(imagePath) {
   if (!existsSync(imagePath)) return ''
 
   const content = await readFile(imagePath)
   return createHash('sha256').update(content).digest('hex')
+}
+
+function reportImagePath({ fileName, payload, reportDir }) {
+  const actualDir = path.resolve(reportDir, payload.actualDir || '')
+  return resolveInside(actualDir, fileName)
+}
+
+function pngPixelDiffRatio(currentPath, baselinePath) {
+  try {
+    if (!existsSync(currentPath) || !existsSync(baselinePath)) return null
+
+    const current = decodePngPixels(currentPath)
+    const baseline = decodePngPixels(baselinePath)
+    if (
+      current.width !== baseline.width ||
+      current.height !== baseline.height ||
+      current.bytesPerPixel !== baseline.bytesPerPixel
+    ) {
+      return null
+    }
+
+    let diffPixels = 0
+    for (let index = 0; index < current.pixels.length; index += current.bytesPerPixel) {
+      for (let offset = 0; offset < current.bytesPerPixel; offset += 1) {
+        if (current.pixels[index + offset] !== baseline.pixels[index + offset]) {
+          diffPixels += 1
+          break
+        }
+      }
+    }
+
+    return diffPixels / (current.width * current.height)
+  } catch {
+    return null
+  }
+}
+
+function decodePngPixels(filePath) {
+  const file = readFileSync(filePath)
+  const signature = file.subarray(0, 8).toString('hex')
+  if (signature !== '89504e470d0a1a0a') throw new Error('invalid PNG signature')
+
+  const chunks = []
+  const idatChunks = []
+  let offset = 8
+  while (offset < file.length) {
+    const length = file.readUInt32BE(offset)
+    const type = file.subarray(offset + 4, offset + 8).toString('ascii')
+    const data = file.subarray(offset + 8, offset + 8 + length)
+    chunks.push({ data, type })
+    if (type === 'IDAT') idatChunks.push(data)
+    offset += 12 + length
+    if (type === 'IEND') break
+  }
+
+  const header = chunks.find((chunk) => chunk.type === 'IHDR')?.data
+  if (!header) throw new Error('missing PNG header')
+  const width = header.readUInt32BE(0)
+  const height = header.readUInt32BE(4)
+  const bitDepth = header[8]
+  const colorType = header[9]
+  const bytesPerPixel = colorType === 6 ? 4 : colorType === 2 ? 3 : 0
+  if (bitDepth !== 8 || !bytesPerPixel) throw new Error(`unsupported PNG format: ${bitDepth}/${colorType}`)
+
+  const inflated = inflateSync(Buffer.concat(idatChunks))
+  const rowStride = width * bytesPerPixel
+  const pixels = Buffer.alloc(height * rowStride)
+  let readOffset = 0
+
+  for (let y = 0; y < height; y += 1) {
+    const filter = inflated[readOffset]
+    readOffset += 1
+    const row = inflated.subarray(readOffset, readOffset + rowStride)
+    readOffset += rowStride
+    const output = pixels.subarray(y * rowStride, (y + 1) * rowStride)
+    const previous = y > 0 ? pixels.subarray((y - 1) * rowStride, y * rowStride) : null
+
+    for (let x = 0; x < rowStride; x += 1) {
+      output[x] = (row[x] + pngFilterPrediction({ bytesPerPixel, filter, output, previous, x })) & 0xff
+    }
+  }
+
+  return { bytesPerPixel, height, pixels, width }
+}
+
+function pngFilterPrediction({ bytesPerPixel, filter, output, previous, x }) {
+  const left = x >= bytesPerPixel ? output[x - bytesPerPixel] : 0
+  const above = previous ? previous[x] : 0
+  const upperLeft = previous && x >= bytesPerPixel ? previous[x - bytesPerPixel] : 0
+
+  if (filter === 0) return 0
+  if (filter === 1) return left
+  if (filter === 2) return above
+  if (filter === 3) return Math.floor((left + above) / 2)
+  if (filter !== 4) throw new Error(`unsupported PNG filter: ${filter}`)
+
+  const estimate = left + above - upperLeft
+  const leftDistance = Math.abs(estimate - left)
+  const aboveDistance = Math.abs(estimate - above)
+  const upperLeftDistance = Math.abs(estimate - upperLeft)
+  if (leftDistance <= aboveDistance && leftDistance <= upperLeftDistance) return left
+  return aboveDistance <= upperLeftDistance ? above : upperLeft
 }
 
 function reportItems(payload, key) {
@@ -356,6 +535,15 @@ function stringArray(value) {
 function normalizedSourceFile(value) {
   const sourceFile = stringOrNull(value)
   return sourceFile ? sourceFile.replace(/:\d+(?::\d+)?$/, '') : ''
+}
+
+function joinHref(base, ...parts) {
+  const root = String(base || '').replace(/\/+$/, '')
+  const suffix = parts
+    .map((part) => String(part || '').replace(/^\.?\//, '').replace(/^\/+/, '').replace(/\/+$/, ''))
+    .filter(Boolean)
+    .join('/')
+  return suffix ? `${root}/${suffix}` : root
 }
 
 function resolveInside(rootDir, relativePath) {

@@ -111,10 +111,12 @@ under `/<surface>/<sha>/` and `/<surface>/latest/`. Main publishes update
 `visual-baseline-state.json` when the current main report can be traced to a
 merged PR with approved managed review state. Pull request publishes read that
 baseline file and match current items by producer-supplied Playwright test or
-Storybook story identity plus image hash before showing items to reviewers, so
-a stale reg-viz artifact baseline does not force reviewers to reapprove
-unchanged tests. A new test/story identity is reviewable even if it reuses an
-approved screenshot filename and produces identical image bytes. Set
+Storybook story identity plus image hash before showing items to reviewers. If
+reg-viz cannot find its target artifact and reports baseline-known PNGs as new,
+the publisher also suppresses baseline-approved items that remain within the
+visual tolerance. This keeps stale artifact baselines from forcing reviewers to
+reapprove unchanged tests. A new test/story identity is reviewable even if it
+reuses an approved screenshot filename and produces identical image bytes. Set
 `artifact_paths` to the caller repo's generated
 evidence paths, prefixed with `repo/` because the reusable workflow checks the
 product repository out into that subdirectory.
