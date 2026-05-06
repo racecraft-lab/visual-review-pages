@@ -150,24 +150,42 @@ test('keeps scroll and zoom stable while toggling heat map controls', async ({ p
   }
 })
 
-test('keeps long review titles readable beside heat map controls', async ({ page }) => {
+test('keeps long review titles readable and centers fit-loaded controls', async ({ page }) => {
   const fixture = await createHeatMapFixture({
     changedTitle: 'Product Line / Visual States: Header Desktop Facility',
   })
 
   try {
     await page.setViewportSize({ width: 1512, height: 900 })
+    await page.addInitScript(() => {
+      localStorage.setItem('visual-review:28:playwright:latest:abc1234:zoom', '177')
+    })
     await page.goto(`${fixture.url}/${reportPath}/`)
     await expect(page.getByRole('button', { exact: true, name: 'Heat map' })).toBeVisible()
+    await expect(page.locator('[data-zoom-value]')).toHaveText('100%')
+    await page.getByRole('button', { exact: true, name: 'Heat map' }).click()
 
     const metrics = await page.locator('.viewer-toolbar').evaluate((toolbar) => {
       const heading = toolbar.querySelector('.snapshot-heading')
       const title = toolbar.querySelector('.snapshot-heading h2')
       const controls = toolbar.querySelector('.toolbar-controls')
+      const controlChildren = Array.from(controls.children)
       const headingRect = heading.getBoundingClientRect()
       const titleRect = title.getBoundingClientRect()
       const controlsRect = controls.getBoundingClientRect()
+      const childrenRect = controlChildren.reduce((bounds, child) => {
+        const rect = child.getBoundingClientRect()
+        return {
+          bottom: Math.max(bounds.bottom, rect.bottom),
+          left: Math.min(bounds.left, rect.left),
+          right: Math.max(bounds.right, rect.right),
+          top: Math.min(bounds.top, rect.top),
+        }
+      }, { bottom: -Infinity, left: Infinity, right: -Infinity, top: Infinity })
+      const controlsCenter = controlsRect.left + controlsRect.width / 2
+      const childrenCenter = childrenRect.left + (childrenRect.right - childrenRect.left) / 2
       return {
+        centerOffset: Math.round(Math.abs(controlsCenter - childrenCenter)),
         controlsTop: Math.round(controlsRect.top),
         headingTop: Math.round(headingRect.top),
         headingWidth: Math.round(headingRect.width),
@@ -181,6 +199,7 @@ test('keeps long review titles readable beside heat map controls', async ({ page
     expect(metrics.toolbarWidth).toBeGreaterThanOrEqual(560)
     expect(metrics.headingWidth).toBeGreaterThan(280)
     expect(metrics.titleHeight).toBeLessThan(70)
+    expect(metrics.centerOffset).toBeLessThanOrEqual(2)
     expect(metrics.controlsTop).toBeGreaterThanOrEqual(metrics.headingTop)
   } finally {
     await fixture.close()
