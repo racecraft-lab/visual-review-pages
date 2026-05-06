@@ -75,6 +75,81 @@ test('keeps the heat map toggle scoped to the active image', async ({ page }) =>
   }
 })
 
+test('keeps scroll and zoom stable while toggling heat map controls', async ({ page }) => {
+  const fixture = await createHeatMapFixture()
+
+  try {
+    await page.setViewportSize({ width: 900, height: 700 })
+    await page.goto(`${fixture.url}/${reportPath}/`)
+    await page.addStyleTag({
+      content: `
+        .stage {
+          width: 360px;
+          height: 180px;
+          min-height: 0;
+        }
+        .stage-inner {
+          place-items: start;
+        }
+      `,
+    })
+
+    const zoom = page.locator('[data-action="zoom"]')
+    await zoom.evaluate((input) => {
+      input.value = '200'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await expect(page.locator('[data-zoom-value]')).toHaveText('200%')
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('.stage img'))
+      .every((image) => image.complete && image.naturalWidth > 0))
+
+    const stage = page.locator('.stage')
+    const before = await stage.evaluate((element) => {
+      element.scrollLeft = 220
+      element.scrollTop = 90
+      return {
+        left: element.scrollLeft,
+        maxLeft: element.scrollWidth - element.clientWidth,
+        maxTop: element.scrollHeight - element.clientHeight,
+        top: element.scrollTop,
+      }
+    })
+    expect(before.maxLeft).toBeGreaterThan(0)
+    expect(before.maxTop).toBeGreaterThan(0)
+    expect(before.left).toBeGreaterThan(0)
+    expect(before.top).toBeGreaterThan(0)
+
+    const heatMapToggle = page.getByRole('button', { exact: true, name: 'Heat map' })
+    await heatMapToggle.click()
+    await expect(page.locator('[data-heat-map-frame]')).toHaveAttribute('data-heat-map-state', 'ready')
+    await expect(page.locator('[data-zoom-value]')).toHaveText('200%')
+
+    const afterToggle = await stage.evaluate((element) => ({
+      left: element.scrollLeft,
+      top: element.scrollTop,
+    }))
+    expect(afterToggle).toEqual({ left: before.left, top: before.top })
+    await expect(page.locator('[data-heat-map-status]')).toHaveText('On')
+
+    const intensity = page.locator('[data-action="heat-map-intensity"]')
+    await expect(intensity).toBeEnabled()
+    await intensity.evaluate((input) => {
+      input.value = '50'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await expect(page.locator('[data-heat-map-intensity-value]')).toHaveText('50%')
+    await expect(page.locator('[data-heat-map-canvas]')).toHaveCSS('opacity', '0.5')
+
+    const afterIntensity = await stage.evaluate((element) => ({
+      left: element.scrollLeft,
+      top: element.scrollTop,
+    }))
+    expect(afterIntensity).toEqual({ left: before.left, top: before.top })
+  } finally {
+    await fixture.close()
+  }
+})
+
 async function createHeatMapFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'visual-review-heatmap-'))
   const reportRoot = path.join(root, reportPath)
