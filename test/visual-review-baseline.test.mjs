@@ -8,6 +8,7 @@ import { deflateSync } from 'node:zlib'
 import {
   applyBaselineReviewStateToPayload,
   buildSurfaceBaselineReviewState,
+  inferReviewDomainsFromChangedFiles,
 } from '../src/visual-review-baseline.mjs'
 
 const repository = 'example-org/example-product'
@@ -41,6 +42,39 @@ function payload(fileName = snapshot) {
     passedItems: [],
   }
 }
+
+test('review domain inference prefers visual source files over docs paths', () => {
+  const domains = inferReviewDomainsFromChangedFiles({
+    changedFiles: [
+      'docs/ai/specs/SPEC-008-workflow.md',
+      'src/components/panels/orchestration-bar.workflow-contracts.stories.tsx',
+      'tests/e2e/workflow-contract-diagnostics.spec.ts',
+    ],
+    payload: {
+      deletedItems: [],
+      failedItems: [
+        {
+          raw: 'spec-008/budget.default.png',
+          review: {
+            domain: 'spec-008',
+            sourceFile: 'tests/e2e/spec-008/budget.spec.ts',
+          },
+        },
+      ],
+      newItems: [
+        {
+          raw: 'workflow-contracts/contracts-diagnostics-redacted.png',
+          review: {
+            domain: 'workflow-contracts',
+            sourceFile: 'tests/e2e/workflow-contract-diagnostics.spec.ts:12',
+          },
+        },
+      ],
+    },
+  })
+
+  assert.deepEqual(domains, ['workflow-contracts'])
+})
 
 function payloadForTestIdentity({
   fileName = snapshot,

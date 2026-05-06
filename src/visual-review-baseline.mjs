@@ -203,16 +203,31 @@ export function inferReviewDomainsFromChangedFiles({
   changedFiles = [],
   payload,
 }) {
-  const domains = normalizeReviewDomains([
-    ...reportItems(payload, 'failedItems').map(itemReviewDomain),
-    ...reportItems(payload, 'newItems').map(itemReviewDomain),
-    ...reportItems(payload, 'deletedItems').map(itemReviewDomain),
-  ])
+  const reviewableItems = [
+    ...reportItems(payload, 'failedItems'),
+    ...reportItems(payload, 'newItems'),
+    ...reportItems(payload, 'deletedItems'),
+  ]
+  const domains = normalizeReviewDomains(reviewableItems.map(itemReviewDomain))
   if (domains.length === 0) return []
 
-  const changedText = Array.isArray(changedFiles)
-    ? changedFiles.map((filePath) => normalizeDomainToken(filePath)).join('\n')
-    : ''
+  const changedPaths = Array.isArray(changedFiles)
+    ? changedFiles.map(normalizeRepoPath).filter(Boolean)
+    : []
+  if (changedPaths.length === 0) return []
+
+  const changedPathSet = new Set(changedPaths)
+  const domainsBySourceFile = normalizeReviewDomains(
+    reviewableItems
+      .filter((item) => changedPathSet.has(itemReviewSourceFile(item)))
+      .map(itemReviewDomain)
+  )
+  if (domainsBySourceFile.length > 0) return domainsBySourceFile
+
+  const changedText = changedPaths
+    .filter(pathCanInferReviewDomain)
+    .map((filePath) => normalizeDomainToken(filePath))
+    .join('\n')
   if (!changedText) return []
 
   return domains.filter((domain) => {
@@ -530,6 +545,10 @@ function itemReviewDomain(item) {
   return normalizeReviewDomain(item?.review?.domain || item?.visualMetadata?.domain || '')
 }
 
+function itemReviewSourceFile(item) {
+  return normalizeRepoPath(item?.review?.sourceFile || item?.visualMetadata?.sourceFile || '')
+}
+
 function normalizeReviewDomains(values) {
   const entries = Array.isArray(values) ? values : String(values || '').split(/[,\n]/)
   return uniqueStrings(entries.map(normalizeReviewDomain))
@@ -541,6 +560,18 @@ function normalizeReviewDomain(value) {
 
 function normalizeDomainToken(value) {
   return normalizeReviewDomain(value).replace(/[^a-z0-9]+/g, '-')
+}
+
+function normalizeRepoPath(value) {
+  return normalizeReviewDomain(value)
+    .replace(/:\d+(?::\d+)?$/, '')
+    .replaceAll('\\', '/')
+    .replace(/^\.\//, '')
+}
+
+function pathCanInferReviewDomain(value) {
+  return /^(src|test|tests|stories|storybook|\.storybook)\//.test(value) ||
+    /\.[cm]?[jt]sx?$/.test(value)
 }
 
 function uniqueStrings(values) {
