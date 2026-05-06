@@ -95,6 +95,8 @@ jobs:
       manifest_dir: test-results/visual-metadata
       image_directory_path: test-results/visual-snapshots
       report_file_path: test-results/visual-report/report.html
+      review_domains: auto
+      suppress_reg_viz_comments: true
       artifact_paths: |
         repo/test-results/
         repo/playwright-report/
@@ -118,7 +120,11 @@ PNG pixels are identical. This keeps stale artifact baselines from forcing
 reviewers to reapprove unchanged tests while preserving any visible pixel
 change for review. A new test/story identity is reviewable even if it
 reuses an approved screenshot filename and produces identical image bytes. Set
-`artifact_paths` to the caller repo's generated
+`review_domains: auto` to keep only visual metadata domains that match the PR's
+changed files, or pass a comma-separated list such as `workflow-contracts`.
+Set `suppress_reg_viz_comments: true` when the managed visual review comment
+should be the only PR timeline report; raw reg-viz output is still linked from
+the generated Pages report and workflow summary. Set `artifact_paths` to the caller repo's generated
 evidence paths, prefixed with `repo/` because the reusable workflow checks the
 product repository out into that subdirectory.
 

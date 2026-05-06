@@ -97,6 +97,16 @@ on:
         required: false
         default: main
         type: string
+      review_domains:
+        description: Comma-separated review domains to keep in the review queue. Use auto to infer domains from PR changed files.
+        required: false
+        default: ''
+        type: string
+      suppress_reg_viz_comments:
+        description: Delete reg-viz artifact comments after publishing the managed visual review comment.
+        required: false
+        default: false
+        type: boolean
       timeout_minutes:
         description: Job timeout in minutes.
         required: false
@@ -254,6 +264,12 @@ jobs:
 
           if [ -n "$VISUAL_REVIEW_MANIFEST_DIR" ]; then
             args+=(--manifest-dir "repo/$VISUAL_REVIEW_MANIFEST_DIR")
+          fi
+          if [ -n "${{ inputs.review_domains }}" ]; then
+            args+=(--review-domains "${{ inputs.review_domains }}")
+          fi
+          if [ "${{ inputs.suppress_reg_viz_comments }}" = "true" ]; then
+            args+=(--suppress-reg-viz-comments "true")
           fi
 
           node visual-review-pages/bin/publish-visual-review-pages.mjs "${args[@]}"

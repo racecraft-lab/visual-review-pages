@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import {
-  cp,
+  copyFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -14,9 +14,19 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   applyBaselineReviewStateToPayload,
+  applyReviewScopeToPayload,
   buildSurfaceBaselineReviewState,
+  inferReviewDomainsFromChangedFiles,
   mergeSurfaceBaselineReviewState,
 } from './visual-review-baseline.mjs'
+import {
+  buildSurfaceReviewState,
+  findReviewComment,
+  mergeSurfaceReviewState,
+  parseReviewCommentBody,
+  renderReviewComment,
+  VISUAL_REVIEW_COMMENT_MARKER,
+} from './visual-review-state.mjs'
 import {
   resolveInitialReviewStateSource,
 } from './visual-review-producer.mjs'
@@ -64,6 +74,34 @@ function readJsonIfPresent(filePath, fallback) {
 
 async function readGitHubEvent() {
   return readJsonIfPresent(process.env.GITHUB_EVENT_PATH, {})
+}
+
+async function readPullRequestFiles({ repository, prNumber, token, warn = console.warn }) {
+  if (!repository || !prNumber || !token || typeof fetch !== 'function') return []
+
+  const { owner, repo } = repoParts(repository)
+  const files = []
+  for (let page = 1; page <= 10; page += 1) {
+    const endpoint = `${githubApiUrl()}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${encodeURIComponent(prNumber)}/files?per_page=100&page=${page}`
+    const response = await fetch(endpoint, {
+      headers: {
+        accept: 'application/vnd.github+json',
+        authorization: `Bearer ${token}`,
+        'x-github-api-version': '2022-11-28',
+      },
+    })
+
+    if (!response.ok) {
+      warn(`[visual-pr-pages] unable to load PR #${prNumber} changed files: GitHub API ${response.status}`)
+      return []
+    }
+
+    const pageFiles = await response.json()
+    if (!Array.isArray(pageFiles)) return files
+    files.push(...pageFiles.map((file) => String(file?.filename || '')).filter(Boolean))
+    if (pageFiles.length < 100) break
+  }
+  return files
 }
 
 function repoParts(repository) {
@@ -386,6 +424,22 @@ function manifestDirsForOptions(options) {
   ])
 }
 
+function reviewDomainsForOptions(options) {
+  const value = options['review-domains'] || process.env.VISUAL_REVIEW_DOMAINS || ''
+  return String(value)
+    .split(/[,\n]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+}
+
+function shouldInferReviewDomains(domains) {
+  return domains.some((domain) => ['auto', 'changed-files'].includes(domain.toLowerCase()))
+}
+
+function explicitReviewDomains(domains) {
+  return domains.filter((domain) => !['auto', 'changed-files'].includes(domain.toLowerCase()))
+}
+
 async function enrichReportPayload(payload, reportDir, manifestDirs = []) {
   const actualDir = path.resolve(reportDir, payload.actualDir)
   const expectedDir = path.resolve(reportDir, payload.expectedDir)
@@ -555,6 +609,7 @@ function resolveInside(rootDir, relativePath) {
 }
 
 async function copyReportAssetDir({ label, sourceDir, targetDir, requiredFiles }) {
+  await rm(targetDir, { recursive: true, force: true })
   if (!existsSync(sourceDir)) {
     if (requiredFiles.length > 0) {
       throw new Error(`missing ${label} visual image directory: ${sourceDir}`)
@@ -562,9 +617,15 @@ async function copyReportAssetDir({ label, sourceDir, targetDir, requiredFiles }
     return
   }
 
-  await rm(targetDir, { recursive: true, force: true })
-  await mkdir(path.dirname(targetDir), { recursive: true })
-  await cp(sourceDir, targetDir, { recursive: true })
+  if (requiredFiles.length === 0) return
+
+  await mkdir(targetDir, { recursive: true })
+  for (const fileName of requiredFiles) {
+    const sourceFile = resolveInside(sourceDir, fileName)
+    const targetFile = resolveInside(targetDir, fileName)
+    await mkdir(path.dirname(targetFile), { recursive: true })
+    await copyFile(sourceFile, targetFile)
+  }
 
   const missing = requiredFiles.filter((fileName) => !existsSync(resolveInside(targetDir, fileName)))
   if (missing.length > 0) {
@@ -1304,6 +1365,134 @@ function latestMapForReports(reports, baseUrl, prNumber) {
   return latest
 }
 
+async function githubRequest(pathname, options = {}) {
+  const token = options.token || process.env.GITHUB_TOKEN
+  if (options.requireToken && !token) throw new Error('GITHUB_TOKEN is required')
+  const headers = {
+    accept: 'application/vnd.github+json',
+    'x-github-api-version': '2022-11-28',
+  }
+  if (token) headers.authorization = `Bearer ${token}`
+  if (options.body) headers['content-type'] = 'application/json'
+
+  const response = await fetch(`${githubApiUrl()}${pathname}`, {
+    method: options.method || 'GET',
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  })
+  if (!response.ok) {
+    let detail = response.statusText
+    try {
+      detail = (await response.json()).message || detail
+    } catch {
+      // Use status text.
+    }
+    throw new Error(`GitHub API ${response.status}: ${detail}`)
+  }
+  return response.status === 204 ? null : response.json()
+}
+
+async function readIssueComments(repository, prNumber) {
+  const { owner, repo } = repoParts(repository)
+  const comments = []
+  for (let page = 1; page <= 10; page += 1) {
+    const pageComments = await githubRequest(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${encodeURIComponent(prNumber)}/comments?per_page=100&page=${page}`,
+      { requireToken: true }
+    )
+    if (!Array.isArray(pageComments)) break
+    comments.push(...pageComments)
+    if (pageComments.length < 100) break
+  }
+  return comments
+}
+
+async function publishManagedReviewComment({ context, payload }) {
+  if (!process.env.GITHUB_TOKEN || !context.repository || !context.prNumber) return null
+
+  const comments = await readIssueComments(context.repository, context.prNumber)
+  const existing = findReviewComment(comments)
+  const existingState = parseReviewCommentBody(existing?.body)
+  const surfaceState = buildSurfaceReviewState({
+    context,
+    items: reviewStateItems(payload),
+  })
+  const merged = mergeSurfaceReviewState(existingState, surfaceState)
+  const body = `${renderReviewComment(merged)}${preservedReviewCommentTail(existing?.body)}`
+  const { owner, repo } = repoParts(context.repository)
+
+  if (existing?.id) {
+    try {
+      return await githubRequest(`/repos/${owner}/${repo}/issues/comments/${existing.id}`, {
+        body: { body },
+        method: 'PATCH',
+        requireToken: true,
+      })
+    } catch (error) {
+      if (!isRecoverableCommentPatchError(error)) throw error
+    }
+  }
+
+  return githubRequest(`/repos/${owner}/${repo}/issues/${context.prNumber}/comments`, {
+    body: { body },
+    method: 'POST',
+    requireToken: true,
+  })
+}
+
+function isRecoverableCommentPatchError(error) {
+  return /^GitHub API (403|404):/.test(String(error?.message || ''))
+}
+
+function preservedReviewCommentTail(body) {
+  if (typeof body !== 'string') return ''
+  const match = body.match(/\n\n### [\s\S]*$/)
+  return match ? match[0] : ''
+}
+
+async function deleteRegVizArtifactComments({ repository, prNumber, preserveCommentId = null }) {
+  if (!process.env.GITHUB_TOKEN || !repository || !prNumber) return 0
+
+  const comments = await readIssueComments(repository, prNumber)
+  const { owner, repo } = repoParts(repository)
+  let deleted = 0
+  for (const comment of comments) {
+    if (preserveCommentId && String(comment.id) === String(preserveCommentId)) continue
+    const body = String(comment.body || '')
+    if (!body.includes('ArtifactName:') || body.includes(VISUAL_REVIEW_COMMENT_MARKER)) continue
+    await githubRequest(`/repos/${owner}/${repo}/issues/comments/${comment.id}`, {
+      method: 'DELETE',
+      requireToken: true,
+    })
+    deleted += 1
+  }
+  return deleted
+}
+
+function reviewStateItems(payload) {
+  return [
+    ...reportItems(payload, 'failedItems').map((item) => reviewStateItem(item, 'changed')),
+    ...reportItems(payload, 'newItems').map((item) => reviewStateItem(item, 'new')),
+    ...reportItems(payload, 'deletedItems').map((item) => reviewStateItem(item, 'deleted')),
+    ...reportItems(payload, 'passedItems').map((item) => reviewStateItem(item, 'passed')),
+  ]
+}
+
+function reviewStateItem(item, variant) {
+  const fileName = itemFileName(item)
+  return {
+    ...item,
+    group: item?.review?.domain || groupNameForFile(fileName || ''),
+    id: fileName ? `${variant}-${fileName}`.replace(/[=?&]/g, '-') : '',
+    variant,
+  }
+}
+
+function groupNameForFile(fileName) {
+  const [group] = String(fileName || '').split('/')
+  return group || 'ungrouped'
+}
+
 async function publishReport(options) {
   const surface = options.surface
   if (!surface) {
@@ -1534,11 +1723,31 @@ async function publishReport(options) {
     reportDir,
     surface,
   })
+  const configuredReviewDomains = reviewDomainsForOptions(options)
+  let activeReviewDomains = explicitReviewDomains(configuredReviewDomains)
+  if (shouldInferReviewDomains(configuredReviewDomains)) {
+    const changedFiles = await readPullRequestFiles({
+      repository,
+      prNumber,
+      token: process.env.GITHUB_TOKEN,
+    })
+    activeReviewDomains = uniqueStrings([
+      ...activeReviewDomains,
+      ...inferReviewDomainsFromChangedFiles({
+        changedFiles,
+        payload: baselineFilteredPayload,
+      }),
+    ])
+  }
+  const reviewScopedPayload = applyReviewScopeToPayload({
+    payload: baselineFilteredPayload,
+    reviewDomains: activeReviewDomains,
+  })
   const reportForPages = {
     ...extractedReport,
-    payload: baselineFilteredPayload,
+    payload: reviewScopedPayload,
   }
-  const baselineApprovedCount = reportItems(baselineFilteredPayload, 'baselineApprovedItems').length
+  const baselineApprovedCount = reportItems(reviewScopedPayload, 'baselineApprovedItems').length
   const reportHref = `${baseUrl}/pr/${prNumber}/runs/${runKey}/${surface}/`
   const latestHref = `${baseUrl}/pr/${prNumber}/${surface}/latest/`
   const reviewContext = {
@@ -1562,6 +1771,7 @@ async function publishReport(options) {
     createdAt,
     baselineApprovedCount,
     regVizHref: './reg-viz.html',
+    reviewScope: reviewScopedPayload.reviewScope || null,
   }
 
   const writePrPages = async () => {
@@ -1668,6 +1878,25 @@ async function publishReport(options) {
       pagesDir,
       rewrite: writePrPages,
     })
+  }
+
+  try {
+    const comment = await publishManagedReviewComment({
+      context: {
+        ...reviewContext,
+        reportHref: latestHref,
+      },
+      payload: reviewScopedPayload,
+    })
+    if (String(options['suppress-reg-viz-comments'] || '').toLowerCase() === 'true') {
+      await deleteRegVizArtifactComments({
+        repository,
+        prNumber,
+        preserveCommentId: comment?.id || null,
+      })
+    }
+  } catch (error) {
+    console.warn(`[visual-pr-pages] unable to update managed PR review comment: ${error.message}`)
   }
 
   console.log(`[visual-pr-pages] published ${surface} report: ${latestHref}`)

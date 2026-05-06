@@ -154,6 +154,69 @@ export async function applyBaselineReviewStateToPayload({
   }
 }
 
+export function applyReviewScopeToPayload({
+  payload,
+  reviewDomains = [],
+}) {
+  const domains = normalizeReviewDomains(reviewDomains)
+  if (domains.length === 0) return payload
+
+  const domainSet = new Set(domains)
+  const reviewScopeFilteredItems = []
+  const scopeItems = (items, variant) => {
+    const scoped = []
+    for (const item of reportItems(payload, items)) {
+      if (itemMatchesReviewDomain(item, domainSet)) {
+        scoped.push(item)
+      } else {
+        reviewScopeFilteredItems.push({ ...item, reviewScopeVariant: variant })
+      }
+    }
+    return scoped
+  }
+
+  const failedItems = scopeItems('failedItems', 'changed')
+  const newItems = scopeItems('newItems', 'new')
+  const deletedItems = scopeItems('deletedItems', 'deleted')
+
+  return {
+    ...payload,
+    deletedItems,
+    failedItems,
+    hasDeleted: deletedItems.length > 0,
+    hasFailed: failedItems.length > 0,
+    hasNew: newItems.length > 0,
+    newItems,
+    reviewScope: {
+      domains,
+      filtered: reviewScopeFilteredItems.length,
+    },
+    reviewScopeFilteredItems,
+  }
+}
+
+export function inferReviewDomainsFromChangedFiles({
+  changedFiles = [],
+  payload,
+}) {
+  const domains = normalizeReviewDomains([
+    ...reportItems(payload, 'failedItems').map(itemReviewDomain),
+    ...reportItems(payload, 'newItems').map(itemReviewDomain),
+    ...reportItems(payload, 'deletedItems').map(itemReviewDomain),
+  ])
+  if (domains.length === 0) return []
+
+  const changedText = Array.isArray(changedFiles)
+    ? changedFiles.map((filePath) => normalizeDomainToken(filePath)).join('\n')
+    : ''
+  if (!changedText) return []
+
+  return domains.filter((domain) => {
+    const token = normalizeDomainToken(domain)
+    return token && changedText.includes(token)
+  })
+}
+
 function baselinePassedItem(baseline, item, variant, baselineEntry = null) {
   const entry = baselineEntry || baselineEntryForItem(baseline, item) || {}
   return {
@@ -449,6 +512,35 @@ function pngFilterPrediction({ bytesPerPixel, filter, output, previous, x }) {
 
 function reportItems(payload, key) {
   return Array.isArray(payload?.[key]) ? payload[key] : []
+}
+
+function itemMatchesReviewDomain(item, domainSet) {
+  const domain = itemReviewDomain(item)
+  if (domain && domainSet.has(domain)) return true
+
+  const tags = Array.isArray(item?.review?.tags) ? item.review.tags : []
+  return tags.some((tag) => domainSet.has(normalizeReviewDomain(tag)))
+}
+
+function itemReviewDomain(item) {
+  return normalizeReviewDomain(item?.review?.domain || item?.visualMetadata?.domain || '')
+}
+
+function normalizeReviewDomains(values) {
+  const entries = Array.isArray(values) ? values : String(values || '').split(/[,\n]/)
+  return uniqueStrings(entries.map(normalizeReviewDomain))
+}
+
+function normalizeReviewDomain(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function normalizeDomainToken(value) {
+  return normalizeReviewDomain(value).replace(/[^a-z0-9]+/g, '-')
+}
+
+function uniqueStrings(values) {
+  return Array.from(new Set(values.filter(Boolean)))
 }
 
 function itemFileName(item) {

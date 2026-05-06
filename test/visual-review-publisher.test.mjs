@@ -309,6 +309,100 @@ test('publisher CLI filters PR items already approved in the main baseline state
   }
 })
 
+test('publisher CLI can scope reviewable PR items by visual metadata domain', () => {
+  const repoRoot = process.cwd()
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), 'visual-review-publisher-domain-scope-'))
+  const reportDir = path.join(tempDir, 'visual-report')
+  const actualDir = path.join(reportDir, '__reg__', '1_actual')
+  const pagesDir = path.join(tempDir, 'pages')
+  const keptSnapshot = 'workflow-contracts/contracts-diagnostics.png'
+  const filteredSnapshot = 'spec-008/budget-default.png'
+
+  try {
+    mkdirSync(path.dirname(path.join(actualDir, keptSnapshot)), { recursive: true })
+    mkdirSync(path.dirname(path.join(actualDir, filteredSnapshot)), { recursive: true })
+    writeFileSync(path.join(actualDir, keptSnapshot), 'kept-png')
+    writeFileSync(path.join(actualDir, filteredSnapshot), 'filtered-png')
+    writeFileSync(path.join(actualDir, 'workflow-contracts', 'contracts-diagnostics.visual.json'), `${JSON.stringify({
+      version: 1,
+      kind: 'playwright',
+      domain: 'workflow-contracts',
+      name: 'contracts-diagnostics',
+      sourceFile: 'tests/e2e/workflow-contract-diagnostics.spec.ts',
+    }, null, 2)}\n`)
+    writeFileSync(path.join(actualDir, 'spec-008', 'budget-default.visual.json'), `${JSON.stringify({
+      version: 1,
+      kind: 'playwright',
+      domain: 'spec-008',
+      name: 'budget-default',
+      sourceFile: 'tests/e2e/governance-budget.e2e.ts',
+    }, null, 2)}\n`)
+
+    const payload = {
+      actualDir: '__reg__/1_actual',
+      deletedItems: [],
+      diffDir: '__reg__/0_diff',
+      expectedDir: '__reg__/2_expected',
+      failedItems: [],
+      newItems: [
+        { raw: keptSnapshot, encoded: keptSnapshot },
+        { raw: filteredSnapshot, encoded: filteredSnapshot },
+      ],
+      passedItems: [],
+    }
+    const reportFile = path.join(reportDir, 'audit.html')
+    writeFileSync(reportFile, `<script>window['__reg__'] = ${JSON.stringify(payload)};</script>`)
+
+    const result = spawnSync(process.execPath, [
+      path.join(repoRoot, 'bin', 'publish-visual-review-pages.mjs'),
+      '--surface',
+      'audit',
+      '--report-file',
+      reportFile,
+      '--pages-dir',
+      pagesDir,
+      '--repository',
+      'example/reusable-product',
+      '--pr-number',
+      '12',
+      '--head-ref',
+      'feature/visuals',
+      '--base-ref',
+      'main',
+      '--sha',
+      'abcdef1234567890',
+      '--run-id',
+      '456',
+      '--run-attempt',
+      '1',
+      '--base-url',
+      'https://example.github.io/reusable-product',
+      '--review-domains',
+      'workflow-contracts',
+    ], {
+      cwd: tempDir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GITHUB_SHA: 'abcdef1234567890',
+      },
+    })
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+
+    const latestDir = path.join(pagesDir, 'pr', '12', 'audit', 'latest')
+    const reviewData = extractReviewData(readFileSync(path.join(latestDir, 'index.html'), 'utf8'))
+
+    assert.deepEqual(reviewData.payload.newItems.map((item) => item.raw), [keptSnapshot])
+    assert.equal(reviewData.payload.reviewScope.filtered, 1)
+    assert.deepEqual(reviewData.payload.reviewScope.domains, ['workflow-contracts'])
+    assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', keptSnapshot)), true)
+    assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', filteredSnapshot)), false)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
 test('publisher CLI does not baseline-approve a new test that reuses an approved snapshot image', () => {
   const repoRoot = process.cwd()
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'visual-review-publisher-test-baseline-'))
