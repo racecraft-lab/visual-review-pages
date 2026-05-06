@@ -292,7 +292,7 @@ async function matchingBaselineEntry({
   if (currentSha && currentSha === entry.imageSha256) return { ...entry, matchKind: 'hash' }
   if (!allowVisualTolerance || !baselineReportDir || !currentSha) return null
 
-  const baselinePath = reportImagePath({ fileName, payload, reportDir: baselineReportDir })
+  const baselinePath = baselineReportImagePath({ baselineReportDir, fileName })
   const diffRatio = pngPixelDiffRatio(currentPath, baselinePath)
   if (diffRatio !== null && diffRatio <= visualDiffThreshold) {
     return { ...entry, matchKind: 'visual-tolerance', visualDiffRatio: diffRatio }
@@ -344,6 +344,10 @@ async function hashFile(imagePath) {
 function reportImagePath({ fileName, payload, reportDir }) {
   const actualDir = path.resolve(reportDir, payload.actualDir || '')
   return resolveInside(actualDir, fileName)
+}
+
+function baselineReportImagePath({ baselineReportDir, fileName }) {
+  return resolveInside(path.join(baselineReportDir, BASELINE_REPORT_ACTUAL_DIR), fileName)
 }
 
 function pngPixelDiffRatio(currentPath, baselinePath) {

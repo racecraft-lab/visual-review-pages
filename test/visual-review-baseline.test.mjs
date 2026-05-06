@@ -425,13 +425,14 @@ test('PR publishing keeps baseline-approved new items reviewable when PNG pixels
 })
 
 test('PR baseline references use main report asset paths when reg-viz paths traverse upward', async () => {
-  const baselineReport = tempReport()
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'visual-review-baseline-traversal-'))
-  const reportDir = path.join(tempDir, 'test-results', 'visual-report')
-  const actualDir = path.join(tempDir, '__reg__', '1_actual', 'settings')
+  const reportDir = path.join(tempDir, 'pages', 'pr', '28', 'storybook', 'latest')
+  const baselineActualDir = path.join(reportDir, '__reg__', '1_actual', 'settings')
+  const currentActualDir = path.resolve(reportDir, '../../../__reg__/1_actual/settings')
   try {
-    mkdirSync(actualDir, { recursive: true })
-    writeFileSync(path.join(baselineReport.reportDir, '__reg__', '1_actual', snapshot), pngBuffer())
+    mkdirSync(baselineActualDir, { recursive: true })
+    mkdirSync(currentActualDir, { recursive: true })
+    writeFileSync(path.join(baselineActualDir, 'default.png'), pngBuffer())
     const surfaceBaseline = await buildSurfaceBaselineReviewState({
       context: {
         headRef: 'main',
@@ -441,13 +442,13 @@ test('PR baseline references use main report asset paths when reg-viz paths trav
       },
       initialReviewState: sourceReviewState(),
       payload: payloadForTestIdentity(),
-      reportDir: baselineReport.reportDir,
+      reportDir,
       surface,
       surfaceLabel: 'Storybook',
       updatedAt: '2026-05-05T00:00:00.000Z',
     })
 
-    writeFileSync(path.join(actualDir, 'default.png'), pngBuffer({
+    writeFileSync(path.join(currentActualDir, 'default.png'), pngBuffer({
       changedPixels: Array.from({ length: 8 }, (_, index) => ({ index, rgb: [20, 30, 40] })),
     }))
     const prPayload = {
@@ -455,7 +456,7 @@ test('PR baseline references use main report asset paths when reg-viz paths trav
       actualDir: '../../../__reg__/1_actual',
     }
     const filtered = await applyBaselineReviewStateToPayload({
-      baselineReportDir: baselineReport.reportDir,
+      baselineReportDir: reportDir,
       baselineState: {
         repository,
         schema: 'visual-review-pages.visual-baseline-state.v1',
@@ -469,12 +470,12 @@ test('PR baseline references use main report asset paths when reg-viz paths trav
     })
 
     assert.equal(filtered.newItems.length, 1)
+    assert.equal(filtered.passedItems.length, 0)
     assert.equal(
       filtered.newItems[0].baselineReference.imageHref,
       'https://example.github.io/example-product/storybook/latest/__reg__/1_actual/settings/default.png'
     )
   } finally {
-    rmSync(baselineReport.tempDir, { recursive: true, force: true })
     rmSync(tempDir, { recursive: true, force: true })
   }
 })
