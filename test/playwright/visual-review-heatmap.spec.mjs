@@ -150,7 +150,44 @@ test('keeps scroll and zoom stable while toggling heat map controls', async ({ p
   }
 })
 
-async function createHeatMapFixture() {
+test('keeps long review titles readable beside heat map controls', async ({ page }) => {
+  const fixture = await createHeatMapFixture({
+    changedTitle: 'Product Line / Visual States: Header Desktop Facility',
+  })
+
+  try {
+    await page.setViewportSize({ width: 1512, height: 900 })
+    await page.goto(`${fixture.url}/${reportPath}/`)
+    await expect(page.getByRole('button', { exact: true, name: 'Heat map' })).toBeVisible()
+
+    const metrics = await page.locator('.viewer-toolbar').evaluate((toolbar) => {
+      const heading = toolbar.querySelector('.snapshot-heading')
+      const title = toolbar.querySelector('.snapshot-heading h2')
+      const controls = toolbar.querySelector('.toolbar-controls')
+      const headingRect = heading.getBoundingClientRect()
+      const titleRect = title.getBoundingClientRect()
+      const controlsRect = controls.getBoundingClientRect()
+      return {
+        controlsTop: Math.round(controlsRect.top),
+        headingTop: Math.round(headingRect.top),
+        headingWidth: Math.round(headingRect.width),
+        titleHeight: Math.round(titleRect.height),
+        titleText: title.textContent,
+        toolbarWidth: Math.round(toolbar.getBoundingClientRect().width),
+      }
+    })
+
+    expect(metrics.titleText).toBe('Product Line / Visual States: Header Desktop Facility')
+    expect(metrics.toolbarWidth).toBeGreaterThanOrEqual(560)
+    expect(metrics.headingWidth).toBeGreaterThan(280)
+    expect(metrics.titleHeight).toBeLessThan(70)
+    expect(metrics.controlsTop).toBeGreaterThanOrEqual(metrics.headingTop)
+  } finally {
+    await fixture.close()
+  }
+})
+
+async function createHeatMapFixture(options = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'visual-review-heatmap-'))
   const reportRoot = path.join(root, reportPath)
   const baselineRoot = path.join(root, baselinePath)
@@ -165,7 +202,7 @@ async function createHeatMapFixture() {
   ])
 
   await writeFixtureImages({ baselineRoot, reportRoot })
-  await writeFile(path.join(reportRoot, 'index.html'), renderReportHtml(), 'utf8')
+  await writeFile(path.join(reportRoot, 'index.html'), renderReportHtml(options), 'utf8')
   const server = await serveStatic(root)
   return {
     url: server.url,
@@ -200,7 +237,8 @@ async function writeImage(filePath, buffer) {
   await writeFile(filePath, buffer)
 }
 
-function renderReportHtml() {
+function renderReportHtml(options = {}) {
+  const changedTitle = options.changedTitle || 'Heat map changed screen'
   const data = {
     context: {
       baseRef: 'main',
@@ -231,7 +269,7 @@ function renderReportHtml() {
           review: {
             domain: 'heatmap',
             sourceFile: 'tests/heatmap.spec.ts:10',
-            title: 'Heat map changed screen',
+            title: changedTitle,
           },
         },
       ],
