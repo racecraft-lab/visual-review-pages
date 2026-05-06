@@ -313,16 +313,19 @@ test('publisher CLI can scope reviewable PR items by visual metadata domain', ()
   const repoRoot = process.cwd()
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'visual-review-publisher-domain-scope-'))
   const reportDir = path.join(tempDir, 'visual-report')
-  const actualDir = path.join(reportDir, '__reg__', '1_actual')
-  const pagesDir = path.join(tempDir, 'pages')
-  const keptSnapshot = 'workflow-contracts/contracts-diagnostics.png'
-  const filteredSnapshot = 'spec-008/budget-default.png'
+    const actualDir = path.join(reportDir, '__reg__', '1_actual')
+    const pagesDir = path.join(tempDir, 'pages')
+    const keptSnapshot = 'workflow-contracts/contracts-diagnostics.png'
+    const filteredSnapshot = 'spec-008/budget-default.png'
+    const filteredPassedSnapshot = 'spec-008/budget-passed.png'
 
-  try {
-    mkdirSync(path.dirname(path.join(actualDir, keptSnapshot)), { recursive: true })
-    mkdirSync(path.dirname(path.join(actualDir, filteredSnapshot)), { recursive: true })
-    writeFileSync(path.join(actualDir, keptSnapshot), 'kept-png')
-    writeFileSync(path.join(actualDir, filteredSnapshot), 'filtered-png')
+    try {
+      mkdirSync(path.dirname(path.join(actualDir, keptSnapshot)), { recursive: true })
+      mkdirSync(path.dirname(path.join(actualDir, filteredSnapshot)), { recursive: true })
+      mkdirSync(path.dirname(path.join(actualDir, filteredPassedSnapshot)), { recursive: true })
+      writeFileSync(path.join(actualDir, keptSnapshot), 'kept-png')
+      writeFileSync(path.join(actualDir, filteredSnapshot), 'filtered-png')
+      writeFileSync(path.join(actualDir, filteredPassedSnapshot), 'filtered-passed-png')
     writeFileSync(path.join(actualDir, 'workflow-contracts', 'contracts-diagnostics.visual.json'), `${JSON.stringify({
       version: 1,
       kind: 'playwright',
@@ -330,13 +333,20 @@ test('publisher CLI can scope reviewable PR items by visual metadata domain', ()
       name: 'contracts-diagnostics',
       sourceFile: 'tests/e2e/workflow-contract-diagnostics.spec.ts',
     }, null, 2)}\n`)
-    writeFileSync(path.join(actualDir, 'spec-008', 'budget-default.visual.json'), `${JSON.stringify({
-      version: 1,
-      kind: 'playwright',
-      domain: 'spec-008',
-      name: 'budget-default',
-      sourceFile: 'tests/e2e/governance-budget.e2e.ts',
-    }, null, 2)}\n`)
+      writeFileSync(path.join(actualDir, 'spec-008', 'budget-default.visual.json'), `${JSON.stringify({
+        version: 1,
+        kind: 'playwright',
+        domain: 'spec-008',
+        name: 'budget-default',
+        sourceFile: 'tests/e2e/governance-budget.e2e.ts',
+      }, null, 2)}\n`)
+      writeFileSync(path.join(actualDir, 'spec-008', 'budget-passed.visual.json'), `${JSON.stringify({
+        version: 1,
+        kind: 'playwright',
+        domain: 'spec-008',
+        name: 'budget-passed',
+        sourceFile: 'tests/e2e/governance-budget.e2e.ts',
+      }, null, 2)}\n`)
 
     const payload = {
       actualDir: '__reg__/1_actual',
@@ -348,7 +358,9 @@ test('publisher CLI can scope reviewable PR items by visual metadata domain', ()
         { raw: keptSnapshot, encoded: keptSnapshot },
         { raw: filteredSnapshot, encoded: filteredSnapshot },
       ],
-      passedItems: [],
+      passedItems: [
+        { raw: filteredPassedSnapshot, encoded: filteredPassedSnapshot },
+      ],
     }
     const reportFile = path.join(reportDir, 'audit.html')
     writeFileSync(reportFile, `<script>window['__reg__'] = ${JSON.stringify(payload)};</script>`)
@@ -394,10 +406,12 @@ test('publisher CLI can scope reviewable PR items by visual metadata domain', ()
     const reviewData = extractReviewData(readFileSync(path.join(latestDir, 'index.html'), 'utf8'))
 
     assert.deepEqual(reviewData.payload.newItems.map((item) => item.raw), [keptSnapshot])
-    assert.equal(reviewData.payload.reviewScope.filtered, 1)
+    assert.deepEqual(reviewData.payload.passedItems.map((item) => item.raw), [])
+    assert.equal(reviewData.payload.reviewScope.filtered, 2)
     assert.deepEqual(reviewData.payload.reviewScope.domains, ['workflow-contracts'])
     assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', keptSnapshot)), true)
     assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', filteredSnapshot)), false)
+    assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', filteredPassedSnapshot)), false)
   } finally {
     rmSync(tempDir, { recursive: true, force: true })
   }

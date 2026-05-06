@@ -178,15 +178,19 @@ export function applyReviewScopeToPayload({
   const failedItems = scopeItems('failedItems', 'changed')
   const newItems = scopeItems('newItems', 'new')
   const deletedItems = scopeItems('deletedItems', 'deleted')
+  const passedItems = scopeItems('passedItems', 'passed')
+  const baselineApprovedItems = scopeItems('baselineApprovedItems', 'baseline-approved')
 
   return {
     ...payload,
+    baselineApprovedItems,
     deletedItems,
     failedItems,
     hasDeleted: deletedItems.length > 0,
     hasFailed: failedItems.length > 0,
     hasNew: newItems.length > 0,
     newItems,
+    passedItems,
     reviewScope: {
       domains,
       filtered: reviewScopeFilteredItems.length,
