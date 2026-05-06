@@ -323,7 +323,7 @@ test('PR publishing without a baseline report directory hides items only when cu
   }
 })
 
-test('PR publishing hides baseline-approved new items when PNG pixels stay within tolerance', async () => {
+test('PR publishing hides baseline-approved new items when PNG pixels are identical despite different hashes', async () => {
   const baselineReport = tempReport()
   const prReport = tempReport()
   try {
@@ -343,9 +343,10 @@ test('PR publishing hides baseline-approved new items when PNG pixels stay withi
       updatedAt: '2026-05-05T00:00:00.000Z',
     })
 
-    writeFileSync(path.join(prReport.reportDir, '__reg__', '1_actual', snapshot), pngBuffer({
-      changedPixels: [{ index: 0, rgb: [240, 244, 247] }],
-    }))
+    writeFileSync(
+      path.join(prReport.reportDir, '__reg__', '1_actual', snapshot),
+      Buffer.concat([pngBuffer(), Buffer.from('metadata')])
+    )
     const filtered = await applyBaselineReviewStateToPayload({
       baselineReportDir: baselineReport.reportDir,
       baselineState: {
@@ -369,7 +370,7 @@ test('PR publishing hides baseline-approved new items when PNG pixels stay withi
   }
 })
 
-test('PR publishing keeps baseline-approved new items reviewable when PNG pixels exceed tolerance', async () => {
+test('PR publishing keeps baseline-approved new items reviewable when PNG pixels differ', async () => {
   const baselineReport = tempReport()
   const prReport = tempReport()
   try {

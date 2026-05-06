@@ -171,8 +171,8 @@ the sticky reviewer brief beside the screenshot canvas. The publisher also uses
 stable Playwright test and Storybook story identifiers from this object when it
 builds and applies the main-branch visual baseline. When reg-viz target
 artifacts are missing and baseline-known PNGs arrive as new items, the publisher
-can hide approved items whose pixel difference stays inside the visual
-tolerance. Producers should keep `title`, `description`, `focus`, `sourceFile`,
+can hide approved items only when their decoded PNG pixels are identical.
+Producers should keep `title`, `description`, `focus`, `sourceFile`,
 and story/test identifiers readable and stable because those fields are both
 the primary reviewer orientation surface and the guard that prevents a new test
 from inheriting an older approval solely by reusing a screenshot filename.

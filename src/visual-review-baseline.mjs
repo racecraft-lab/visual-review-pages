@@ -8,7 +8,7 @@ export const VISUAL_REVIEW_BASELINE_SCHEMA = 'visual-review-pages.visual-baselin
 
 const BASELINE_REVIEWABLE_VARIANTS = ['changed', 'new']
 const BASELINE_REPORT_ACTUAL_DIR = '__reg__/1_actual'
-const BASELINE_VISUAL_DIFF_THRESHOLD = 0.01
+const BASELINE_VISUAL_DIFF_THRESHOLD = 0
 
 export async function buildSurfaceBaselineReviewState({
   context = {},
