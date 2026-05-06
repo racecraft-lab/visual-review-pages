@@ -7,6 +7,7 @@ import { inflateSync } from 'node:zlib'
 export const VISUAL_REVIEW_BASELINE_SCHEMA = 'visual-review-pages.visual-baseline-state.v1'
 
 const BASELINE_REVIEWABLE_VARIANTS = ['changed', 'new']
+const BASELINE_REPORT_ACTUAL_DIR = '__reg__/1_actual'
 const BASELINE_VISUAL_DIFF_THRESHOLD = 0.01
 
 export async function buildSurfaceBaselineReviewState({
@@ -183,7 +184,7 @@ function baselineReferenceForItem(baseline, payload, item) {
   return {
     baselineHeadSha: baseline.headSha || '',
     baselineReportHref: baseline.reportHref || '',
-    imageHref: joinHref(baseline.reportHref, payload.actualDir || '', fileName),
+    imageHref: joinHref(baseline.reportHref, BASELINE_REPORT_ACTUAL_DIR, fileName),
     imageSha256: entry.imageSha256 || '',
     sourcePrNumber: entry.sourcePrNumber || '',
     sourcePrUrl: entry.sourcePrUrl || '',

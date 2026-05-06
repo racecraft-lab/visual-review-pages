@@ -424,6 +424,61 @@ test('PR publishing keeps baseline-approved new items reviewable when PNG pixels
   }
 })
 
+test('PR baseline references use main report asset paths when reg-viz paths traverse upward', async () => {
+  const baselineReport = tempReport()
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), 'visual-review-baseline-traversal-'))
+  const reportDir = path.join(tempDir, 'test-results', 'visual-report')
+  const actualDir = path.join(tempDir, '__reg__', '1_actual', 'settings')
+  try {
+    mkdirSync(actualDir, { recursive: true })
+    writeFileSync(path.join(baselineReport.reportDir, '__reg__', '1_actual', snapshot), pngBuffer())
+    const surfaceBaseline = await buildSurfaceBaselineReviewState({
+      context: {
+        headRef: 'main',
+        headSha: 'main-head-sha',
+        reportHref: 'https://example.github.io/example-product/storybook/latest/',
+        repository,
+      },
+      initialReviewState: sourceReviewState(),
+      payload: payloadForTestIdentity(),
+      reportDir: baselineReport.reportDir,
+      surface,
+      surfaceLabel: 'Storybook',
+      updatedAt: '2026-05-05T00:00:00.000Z',
+    })
+
+    writeFileSync(path.join(actualDir, 'default.png'), pngBuffer({
+      changedPixels: Array.from({ length: 8 }, (_, index) => ({ index, rgb: [20, 30, 40] })),
+    }))
+    const prPayload = {
+      ...payloadForTestIdentity(),
+      actualDir: '../../../__reg__/1_actual',
+    }
+    const filtered = await applyBaselineReviewStateToPayload({
+      baselineReportDir: baselineReport.reportDir,
+      baselineState: {
+        repository,
+        schema: 'visual-review-pages.visual-baseline-state.v1',
+        surfaces: { [surface]: surfaceBaseline },
+        updatedAt: '2026-05-05T00:00:00.000Z',
+        version: 1,
+      },
+      payload: prPayload,
+      reportDir,
+      surface,
+    })
+
+    assert.equal(filtered.newItems.length, 1)
+    assert.equal(
+      filtered.newItems[0].baselineReference.imageHref,
+      'https://example.github.io/example-product/storybook/latest/__reg__/1_actual/settings/default.png'
+    )
+  } finally {
+    rmSync(baselineReport.tempDir, { recursive: true, force: true })
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
 test('PR publishing hides every item for an unchanged multi-snapshot test', async () => {
   const baselineReport = tempReport()
   const prReport = tempReport()
