@@ -96,6 +96,8 @@ test('publisher CLI creates a reusable PR visual report bundle with annotation a
     assert.equal(reviewData.context.repository, 'example/reusable-product')
     assert.equal(reviewData.context.prNumber, '12')
     assert.equal(reviewData.payload.newItems[0].encoded, snapshot)
+    assert.equal(latestHtml.includes('href="./visual-review-app.css?v=456-attempt-1"'), true)
+    assert.equal(latestHtml.includes('src="./visual-review-app.js?v=456-attempt-1"'), true)
 
     assert.equal(existsSync(path.join(latestDir, 'visual-review-app.js')), true)
     assert.equal(existsSync(path.join(latestDir, 'visual-review-state.mjs')), true)

@@ -422,6 +422,7 @@ function escapeJsonScript(value) {
 
 function generateVisualReviewAppIndex({ context, payload }) {
   const title = `${context.surfaceLabel} Visual Review`
+  const assetVersion = encodeURIComponent(context.runKey || context.createdAt || context.headSha || 'report')
 
   return `<!doctype html>
 <html lang="en">
@@ -429,13 +430,13 @@ function generateVisualReviewAppIndex({ context, payload }) {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(title)}</title>
-    <link rel="stylesheet" href="./visual-review-app.css" />
+    <link rel="stylesheet" href="./visual-review-app.css?v=${assetVersion}" />
   </head>
   <body>
     <div id="visual-review-root"></div>
     <noscript>This visual review app requires JavaScript. Open reg-viz.html for the static fallback report.</noscript>
     <script id="visual-review-data" type="application/json">${escapeJsonScript({ context, payload })}</script>
-    <script src="./visual-review-app.js" type="module"></script>
+    <script src="./visual-review-app.js?v=${assetVersion}" type="module"></script>
   </body>
 </html>
 `
