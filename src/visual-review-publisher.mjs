@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import {
   cp,
@@ -420,9 +421,21 @@ function escapeJsonScript(value) {
     .replaceAll('&', '\\u0026')
 }
 
-function generateVisualReviewAppIndex({ context, payload }) {
+function visualReviewAppAssetVersion(context, assets) {
+  const hash = createHash('sha256')
+  for (const [fileName, content] of assets) {
+    hash.update(fileName)
+    hash.update('\0')
+    hash.update(content)
+    hash.update('\0')
+  }
+  const base = context.runKey || context.createdAt || context.headSha || 'report'
+  return `${base}-${hash.digest('hex').slice(0, 12)}`
+}
+
+function generateVisualReviewAppIndex({ assetVersion, context, payload }) {
   const title = `${context.surfaceLabel} Visual Review`
-  const assetVersion = encodeURIComponent(context.runKey || context.createdAt || context.headSha || 'report')
+  const encodedAssetVersion = encodeURIComponent(assetVersion || context.runKey || context.createdAt || context.headSha || 'report')
 
   return `<!doctype html>
 <html lang="en">
@@ -430,13 +443,13 @@ function generateVisualReviewAppIndex({ context, payload }) {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(title)}</title>
-    <link rel="stylesheet" href="./visual-review-app.css?v=${assetVersion}" />
+    <link rel="stylesheet" href="./visual-review-app.css?v=${encodedAssetVersion}" />
   </head>
   <body>
     <div id="visual-review-root"></div>
     <noscript>This visual review app requires JavaScript. Open reg-viz.html for the static fallback report.</noscript>
     <script id="visual-review-data" type="application/json">${escapeJsonScript({ context, payload })}</script>
-    <script src="./visual-review-app.js?v=${assetVersion}" type="module"></script>
+    <script src="./visual-review-app.js?v=${encodedAssetVersion}" type="module"></script>
   </body>
 </html>
 `
@@ -590,14 +603,20 @@ async function writeReportBundle({ reportFile, reportHtml, extracted, targetDir,
   })
 
   const localizedHtml = localizeReportAssetPaths(reportHtml, extracted, enrichedPayload)
+  const visualReviewAppCss = await readFile(scriptAssetUrl('visual-review-app.css'), 'utf8')
+  const visualReviewAppJs = await readFile(scriptAssetUrl('visual-review-app.js'), 'utf8')
+  const assetVersion = visualReviewAppAssetVersion(context, [
+    ['visual-review-app.css', visualReviewAppCss],
+    ['visual-review-app.js', visualReviewAppJs],
+  ])
   await writeFile(path.join(targetDir, 'reg-viz.html'), localizedHtml)
   await writeFile(
     path.join(targetDir, 'visual-review-app.css'),
-    await readFile(scriptAssetUrl('visual-review-app.css'), 'utf8')
+    visualReviewAppCss
   )
   await writeFile(
     path.join(targetDir, 'visual-review-app.js'),
-    await readFile(scriptAssetUrl('visual-review-app.js'), 'utf8')
+    visualReviewAppJs
   )
   await writeFile(
     path.join(targetDir, 'visual-review-state.mjs'),
@@ -622,6 +641,7 @@ async function writeReportBundle({ reportFile, reportHtml, extracted, targetDir,
   await writeFile(
     path.join(targetDir, 'index.html'),
     generateVisualReviewAppIndex({
+      assetVersion,
       context,
       payload: localizedReportPayload(enrichedPayload),
     })

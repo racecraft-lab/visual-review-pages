@@ -19,6 +19,17 @@ function extractReviewData(html) {
   return JSON.parse(match[1])
 }
 
+function appAssetVersion(repoRoot, runKey) {
+  const hash = createHash('sha256')
+  for (const fileName of ['visual-review-app.css', 'visual-review-app.js']) {
+    hash.update(fileName)
+    hash.update('\0')
+    hash.update(readFileSync(path.join(repoRoot, 'src', fileName), 'utf8'))
+    hash.update('\0')
+  }
+  return `${runKey}-${hash.digest('hex').slice(0, 12)}`
+}
+
 test('publisher CLI creates a reusable PR visual report bundle with annotation assets', () => {
   const repoRoot = process.cwd()
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'visual-review-publisher-'))
@@ -96,8 +107,9 @@ test('publisher CLI creates a reusable PR visual report bundle with annotation a
     assert.equal(reviewData.context.repository, 'example/reusable-product')
     assert.equal(reviewData.context.prNumber, '12')
     assert.equal(reviewData.payload.newItems[0].encoded, snapshot)
-    assert.equal(latestHtml.includes('href="./visual-review-app.css?v=456-attempt-1"'), true)
-    assert.equal(latestHtml.includes('src="./visual-review-app.js?v=456-attempt-1"'), true)
+    const assetVersion = appAssetVersion(repoRoot, '456-attempt-1')
+    assert.equal(latestHtml.includes(`href="./visual-review-app.css?v=${assetVersion}"`), true)
+    assert.equal(latestHtml.includes(`src="./visual-review-app.js?v=${assetVersion}"`), true)
 
     assert.equal(existsSync(path.join(latestDir, 'visual-review-app.js')), true)
     assert.equal(existsSync(path.join(latestDir, 'visual-review-state.mjs')), true)
