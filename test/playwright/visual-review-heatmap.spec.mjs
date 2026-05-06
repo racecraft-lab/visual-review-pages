@@ -150,7 +150,7 @@ test('keeps scroll and zoom stable while toggling heat map controls', async ({ p
   }
 })
 
-test('keeps long review titles readable and centers fit-loaded controls', async ({ page }) => {
+test('uses floating stage controls and fits initial zoom to the image view', async ({ page }) => {
   const fixture = await createHeatMapFixture({
     changedTitle: 'Product Line / Visual States: Header Desktop Facility',
   })
@@ -163,16 +163,38 @@ test('keeps long review titles readable and centers fit-loaded controls', async 
     await page.goto(`${fixture.url}/${reportPath}/`)
     await expect(page.getByRole('button', { exact: true, name: 'Heat map' })).toBeVisible()
     await expect(page.locator('[data-zoom-value]')).toHaveText('100%')
+    await expect(page.locator('.viewer-toolbar .toolbar-controls')).toHaveCount(0)
+    await expect(page.locator('[data-stage-controls] .toolbar-controls')).toBeVisible()
     await page.getByRole('button', { exact: true, name: 'Heat map' }).click()
+    await page.addStyleTag({
+      content: `
+        .stage {
+          width: 120px;
+          height: 180px;
+          min-height: 0;
+        }
+        .stage-shell {
+          width: 120px;
+        }
+        .stage-inner {
+          place-items: start;
+        }
+      `,
+    })
+    await page.evaluate(() => window.dispatchEvent(new Event('resize')))
+    await page.waitForFunction(() => Number.parseInt(document.querySelector('[data-zoom-value]')?.textContent || '100', 10) < 100)
 
-    const metrics = await page.locator('.viewer-toolbar').evaluate((toolbar) => {
+    const metrics = await page.locator('.viewer-card').evaluate((viewer) => {
+      const toolbar = viewer.querySelector('.viewer-toolbar')
+      const stage = viewer.querySelector('.stage')
       const heading = toolbar.querySelector('.snapshot-heading')
       const title = toolbar.querySelector('.snapshot-heading h2')
-      const controls = toolbar.querySelector('.toolbar-controls')
+      const controls = viewer.querySelector('[data-stage-controls] .toolbar-controls')
       const controlChildren = Array.from(controls.children)
       const headingRect = heading.getBoundingClientRect()
       const titleRect = title.getBoundingClientRect()
       const controlsRect = controls.getBoundingClientRect()
+      const stageRect = stage.getBoundingClientRect()
       const childrenRect = controlChildren.reduce((bounds, child) => {
         const rect = child.getBoundingClientRect()
         return {
@@ -184,13 +206,18 @@ test('keeps long review titles readable and centers fit-loaded controls', async 
       }, { bottom: -Infinity, left: Infinity, right: -Infinity, top: Infinity })
       const controlsCenter = controlsRect.left + controlsRect.width / 2
       const childrenCenter = childrenRect.left + (childrenRect.right - childrenRect.left) / 2
+      const stageCenter = stageRect.left + stageRect.width / 2
       return {
         centerOffset: Math.round(Math.abs(controlsCenter - childrenCenter)),
+        controlsOutsideScroll: !stage.contains(controls),
+        controlsStageOffset: Math.round(Math.abs(stageCenter - controlsCenter)),
         controlsTop: Math.round(controlsRect.top),
+        stageTop: Math.round(stageRect.top),
         headingTop: Math.round(headingRect.top),
         headingWidth: Math.round(headingRect.width),
         titleHeight: Math.round(titleRect.height),
         titleText: title.textContent,
+        zoomText: viewer.querySelector('[data-zoom-value]').textContent,
         toolbarWidth: Math.round(toolbar.getBoundingClientRect().width),
       }
     })
@@ -199,8 +226,12 @@ test('keeps long review titles readable and centers fit-loaded controls', async 
     expect(metrics.toolbarWidth).toBeGreaterThanOrEqual(560)
     expect(metrics.headingWidth).toBeGreaterThan(280)
     expect(metrics.titleHeight).toBeLessThan(70)
+    expect(Number.parseInt(metrics.zoomText, 10)).toBeLessThan(100)
+    expect(metrics.controlsOutsideScroll).toBe(true)
     expect(metrics.centerOffset).toBeLessThanOrEqual(2)
-    expect(metrics.controlsTop).toBeGreaterThanOrEqual(metrics.headingTop)
+    expect(metrics.controlsStageOffset).toBeLessThanOrEqual(2)
+    expect(metrics.controlsTop).toBeGreaterThanOrEqual(metrics.stageTop)
+    expect(metrics.controlsTop).toBeGreaterThan(metrics.headingTop)
   } finally {
     await fixture.close()
   }
