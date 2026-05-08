@@ -187,10 +187,12 @@ test('uses floating stage controls and fits initial zoom to the image view', asy
     const metrics = await page.locator('.viewer-card').evaluate((viewer) => {
       const toolbar = viewer.querySelector('.viewer-toolbar')
       const stage = viewer.querySelector('.stage')
+      const controlBar = viewer.querySelector('[data-stage-controls]')
       const heading = toolbar.querySelector('.snapshot-heading')
       const title = toolbar.querySelector('.snapshot-heading h2')
       const controls = viewer.querySelector('[data-stage-controls] .toolbar-controls')
       const controlChildren = Array.from(controls.children)
+      const controlBarRect = controlBar.getBoundingClientRect()
       const headingRect = heading.getBoundingClientRect()
       const titleRect = title.getBoundingClientRect()
       const controlsRect = controls.getBoundingClientRect()
@@ -204,13 +206,15 @@ test('uses floating stage controls and fits initial zoom to the image view', asy
           top: Math.min(bounds.top, rect.top),
         }
       }, { bottom: -Infinity, left: Infinity, right: -Infinity, top: Infinity })
+      const controlBarCenter = controlBarRect.left + controlBarRect.width / 2
       const controlsCenter = controlsRect.left + controlsRect.width / 2
       const childrenCenter = childrenRect.left + (childrenRect.right - childrenRect.left) / 2
-      const stageCenter = stageRect.left + stageRect.width / 2
       return {
         centerOffset: Math.round(Math.abs(controlsCenter - childrenCenter)),
+        controlBarWidth: Math.round(controlBarRect.width),
+        controlsBottom: Math.round(controlsRect.bottom),
+        controlsControlBarOffset: Math.round(Math.abs(controlBarCenter - controlsCenter)),
         controlsOutsideScroll: !stage.contains(controls),
-        controlsStageOffset: Math.round(Math.abs(stageCenter - controlsCenter)),
         controlsTop: Math.round(controlsRect.top),
         stageTop: Math.round(stageRect.top),
         headingTop: Math.round(headingRect.top),
@@ -229,9 +233,76 @@ test('uses floating stage controls and fits initial zoom to the image view', asy
     expect(Number.parseInt(metrics.zoomText, 10)).toBeLessThan(100)
     expect(metrics.controlsOutsideScroll).toBe(true)
     expect(metrics.centerOffset).toBeLessThanOrEqual(2)
-    expect(metrics.controlsStageOffset).toBeLessThanOrEqual(2)
-    expect(metrics.controlsTop).toBeGreaterThanOrEqual(metrics.stageTop)
+    expect(metrics.controlBarWidth).toBeGreaterThanOrEqual(120)
+    expect(metrics.controlsControlBarOffset).toBeLessThanOrEqual(2)
+    expect(metrics.controlsBottom).toBeLessThanOrEqual(metrics.stageTop)
     expect(metrics.controlsTop).toBeGreaterThan(metrics.headingTop)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('clips overlay reveal without resizing the current image', async ({ page }) => {
+  const fixture = await createHeatMapFixture()
+
+  try {
+    await page.goto(`${fixture.url}/${reportPath}/`)
+    await page.getByRole('button', { name: 'Overlay' }).click()
+    const reveal = page.locator('[data-action="overlay"]')
+    await expect(reveal).toBeVisible()
+    await reveal.evaluate((input) => {
+      input.value = '35'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await expect(page.locator('[data-overlay-value]')).toHaveText('35%')
+
+    const metrics = await page.locator('[data-overlay-frame]').evaluate((frame) => {
+      const baseline = frame.querySelector(':scope > img')
+      const current = frame.querySelector('[data-overlay-top] img')
+      const top = frame.querySelector('[data-overlay-top]')
+      const divider = frame.querySelector('[data-overlay-divider]')
+      const frameRect = frame.getBoundingClientRect()
+      const baselineRect = baseline.getBoundingClientRect()
+      const currentRect = current.getBoundingClientRect()
+      const topRect = top.getBoundingClientRect()
+      const dividerRect = divider.getBoundingClientRect()
+      return {
+        baselineWidth: Math.round(baselineRect.width),
+        clipPath: getComputedStyle(top).clipPath,
+        currentLeft: Math.round(currentRect.left - baselineRect.left),
+        currentWidth: Math.round(currentRect.width),
+        dividerLeftPct: Math.round(((dividerRect.left - frameRect.left) / frameRect.width) * 100),
+        topWidth: Math.round(topRect.width),
+      }
+    })
+
+    expect(metrics.currentWidth).toBe(metrics.baselineWidth)
+    expect(metrics.topWidth).toBe(metrics.baselineWidth)
+    expect(metrics.currentLeft).toBe(0)
+    expect(metrics.dividerLeftPct).toBe(35)
+    expect(metrics.clipPath).toContain('65%')
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('toggles the comparison tools on and off', async ({ page }) => {
+  const fixture = await createHeatMapFixture()
+
+  try {
+    await page.goto(`${fixture.url}/${reportPath}/`)
+    const tools = page.getByRole('button', { name: 'Hide comparison tools' })
+    await expect(tools).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('[data-stage-controls] .toolbar-controls')).toBeVisible()
+
+    await tools.click()
+    await expect(page.getByRole('button', { name: 'Show comparison tools' })).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.locator('[data-stage-controls] .toolbar-controls')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Overlay' })).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Show comparison tools' }).click()
+    await expect(page.getByRole('button', { name: 'Hide comparison tools' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByRole('button', { name: 'Overlay' })).toBeVisible()
   } finally {
     await fixture.close()
   }
@@ -308,7 +379,7 @@ function renderReportHtml(options = {}) {
       actualDir: './__reg__/1_actual',
       diffDir: './__reg__/0_diff',
       expectedDir: './__reg__/2_expected',
-      newItems: [
+      failedItems: [
         {
           raw: 'heatmap/changed.png',
           encoded: 'heatmap/changed.png',
