@@ -9,6 +9,7 @@ import {
   applyBaselineReviewStateToPayload,
   buildSurfaceBaselineReviewState,
   inferReviewDomainsFromChangedFiles,
+  mergeSurfaceBaselineReviewState,
 } from '../src/visual-review-baseline.mjs'
 
 const repository = 'example-org/example-product'
@@ -249,6 +250,123 @@ test('main publishing can store approved baseline tests with image hashes', asyn
   } finally {
     rmSync(tempDir, { recursive: true, force: true })
   }
+})
+
+test('main publishing accumulates approved baseline snapshots across merged PRs', () => {
+  const existingSurface = {
+    baseRef: 'main',
+    headRef: 'main',
+    headSha: 'old-main-sha',
+    reportHref: 'https://example.github.io/example-product/playwright/latest/',
+    repository,
+    snapshots: {
+      'settings/default.png': {
+        decision: 'approved',
+        group: 'settings',
+        imageSha256: 'old-approved-hash',
+        itemId: 'new-settings/default.png',
+        reviewer: 'reviewer',
+        snapshot: 'settings/default.png',
+        sourcePrNumber: '26',
+        sourceVariant: 'new',
+        testKey: 'settings-default-test',
+      },
+    },
+    summary: {
+      approved: 1,
+      snapshots: 1,
+      tests: 1,
+    },
+    surface,
+    surfaceLabel: 'Playwright UI',
+    tests: {
+      'settings-default-test': {
+        decision: 'approved',
+        group: 'settings',
+        reviewer: 'reviewer',
+        snapshots: {
+          'settings/default.png': {
+            decision: 'approved',
+            group: 'settings',
+            imageSha256: 'old-approved-hash',
+            itemId: 'new-settings/default.png',
+            reviewer: 'reviewer',
+            snapshot: 'settings/default.png',
+            sourcePrNumber: '26',
+            sourceVariant: 'new',
+            testKey: 'settings-default-test',
+          },
+        },
+        testKey: 'settings-default-test',
+      },
+    },
+    updatedAt: '2026-05-05T00:00:00.000Z',
+  }
+  const deltaSurface = {
+    ...existingSurface,
+    headSha: 'new-main-sha',
+    snapshots: {
+      'settings/new-mode.png': {
+        decision: 'approved',
+        group: 'settings',
+        imageSha256: 'new-approved-hash',
+        itemId: 'new-settings/new-mode.png',
+        reviewer: 'reviewer',
+        snapshot: 'settings/new-mode.png',
+        sourcePrNumber: '28',
+        sourceVariant: 'new',
+        testKey: 'settings-new-mode-test',
+      },
+    },
+    summary: {
+      approved: 1,
+      snapshots: 1,
+      tests: 1,
+    },
+    tests: {
+      'settings-new-mode-test': {
+        decision: 'approved',
+        group: 'settings',
+        reviewer: 'reviewer',
+        snapshots: {
+          'settings/new-mode.png': {
+            decision: 'approved',
+            group: 'settings',
+            imageSha256: 'new-approved-hash',
+            itemId: 'new-settings/new-mode.png',
+            reviewer: 'reviewer',
+            snapshot: 'settings/new-mode.png',
+            sourcePrNumber: '28',
+            sourceVariant: 'new',
+            testKey: 'settings-new-mode-test',
+          },
+        },
+        testKey: 'settings-new-mode-test',
+      },
+    },
+    updatedAt: '2026-05-07T00:00:00.000Z',
+  }
+
+  const merged = mergeSurfaceBaselineReviewState({
+    repository,
+    schema: 'visual-review-pages.visual-baseline-state.v1',
+    surfaces: {
+      [surface]: existingSurface,
+    },
+    updatedAt: '2026-05-05T00:00:00.000Z',
+    version: 1,
+  }, deltaSurface)
+
+  assert.equal(merged.surfaces[surface].headSha, 'new-main-sha')
+  assert.equal(merged.surfaces[surface].snapshots['settings/default.png'].imageSha256, 'old-approved-hash')
+  assert.equal(merged.surfaces[surface].snapshots['settings/new-mode.png'].imageSha256, 'new-approved-hash')
+  assert.equal(merged.surfaces[surface].tests['settings-default-test'].snapshots['settings/default.png'].imageSha256, 'old-approved-hash')
+  assert.equal(merged.surfaces[surface].tests['settings-new-mode-test'].snapshots['settings/new-mode.png'].imageSha256, 'new-approved-hash')
+  assert.deepEqual(merged.surfaces[surface].summary, {
+    approved: 2,
+    snapshots: 2,
+    tests: 2,
+  })
 })
 
 test('PR publishing keeps same-image snapshots reviewable when the test identity is new', async () => {

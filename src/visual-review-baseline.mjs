@@ -89,16 +89,56 @@ export async function buildSurfaceBaselineReviewState({
 }
 
 export function mergeSurfaceBaselineReviewState(existingState, surfaceState) {
+  const existingSurface = existingState?.surfaces?.[surfaceState.surface]
+  const snapshots = {
+    ...(existingSurface?.snapshots && typeof existingSurface.snapshots === 'object' ? existingSurface.snapshots : {}),
+    ...(surfaceState.snapshots && typeof surfaceState.snapshots === 'object' ? surfaceState.snapshots : {}),
+  }
+  const tests = mergeBaselineTests(existingSurface?.tests, surfaceState.tests)
+
   return {
     repository: String(surfaceState.repository || existingState?.repository || ''),
     schema: VISUAL_REVIEW_BASELINE_SCHEMA,
     surfaces: {
       ...(existingState?.surfaces && typeof existingState.surfaces === 'object' ? existingState.surfaces : {}),
-      [surfaceState.surface]: surfaceState,
+      [surfaceState.surface]: {
+        ...(existingSurface && typeof existingSurface === 'object' ? existingSurface : {}),
+        ...surfaceState,
+        snapshots,
+        summary: {
+          ...surfaceState.summary,
+          approved: Object.keys(snapshots).length,
+          snapshots: Object.keys(snapshots).length,
+          tests: Object.keys(tests).length,
+        },
+        tests,
+      },
     },
     updatedAt: surfaceState.updatedAt,
     version: 1,
   }
+}
+
+function mergeBaselineTests(existingTests, incomingTests) {
+  const tests = {
+    ...(existingTests && typeof existingTests === 'object' ? existingTests : {}),
+  }
+
+  for (const [testKey, incomingTest] of Object.entries(
+    incomingTests && typeof incomingTests === 'object' ? incomingTests : {}
+  )) {
+    const existingTest = tests[testKey]
+    tests[testKey] = {
+      ...(existingTest && typeof existingTest === 'object' ? existingTest : {}),
+      ...incomingTest,
+      snapshots: {
+        ...(existingTest?.snapshots && typeof existingTest.snapshots === 'object' ? existingTest.snapshots : {}),
+        ...(incomingTest?.snapshots && typeof incomingTest.snapshots === 'object' ? incomingTest.snapshots : {}),
+      },
+    }
+  }
+
+  return tests
 }
 
 export async function applyBaselineReviewStateToPayload({
