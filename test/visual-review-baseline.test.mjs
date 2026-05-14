@@ -7,9 +7,11 @@ import { deflateSync } from 'node:zlib'
 
 import {
   applyBaselineReviewStateToPayload,
+  applyReviewScopeToPayload,
   buildSurfaceBaselineReviewState,
   inferReviewDomainsFromChangedFiles,
   mergeSurfaceBaselineReviewState,
+  resolveChangedFileReviewScope,
 } from '../src/visual-review-baseline.mjs'
 
 const repository = 'example-org/example-product'
@@ -75,6 +77,60 @@ test('review domain inference prefers visual source files over docs paths', () =
   })
 
   assert.deepEqual(domains, ['workflow-contracts'])
+})
+
+test('changed-file auto scope filters all reviewable items when no visual domain matches', () => {
+  const visualPayload = {
+    deletedItems: [],
+    failedItems: [],
+    newItems: [
+      {
+        raw: 'spec-008/budget.default.png',
+        review: {
+          domain: 'spec-008',
+          sourceFile: 'tests/e2e/spec-008/budget.spec.ts',
+        },
+      },
+      {
+        raw: 'workflow-contracts/contracts-diagnostics-redacted.png',
+        review: {
+          domain: 'workflow-contracts',
+          sourceFile: 'tests/e2e/workflow-contract-diagnostics.spec.ts',
+        },
+      },
+    ],
+    passedItems: [
+      {
+        raw: 'spec-008/budget.passed.png',
+        review: {
+          domain: 'spec-008',
+          sourceFile: 'tests/e2e/spec-008/budget.spec.ts',
+        },
+      },
+    ],
+  }
+
+  const reviewScope = resolveChangedFileReviewScope({
+    changedFiles: [
+      'src/app/api/github/route.ts',
+      'src/app/api/github/sync/route.ts',
+    ],
+    configuredReviewDomains: ['auto'],
+    payload: visualPayload,
+  })
+  const scoped = applyReviewScopeToPayload({
+    payload: visualPayload,
+    reviewDomains: reviewScope.domains,
+    emptyScopeReason: reviewScope.emptyScopeReason,
+  })
+
+  assert.deepEqual(reviewScope.domains, [])
+  assert.equal(reviewScope.emptyScopeReason, 'changed-files-no-review-domain')
+  assert.deepEqual(scoped.newItems, [])
+  assert.deepEqual(scoped.passedItems, [])
+  assert.equal(scoped.reviewScope.filtered, 3)
+  assert.deepEqual(scoped.reviewScope.domains, [])
+  assert.equal(scoped.reviewScope.reason, 'changed-files-no-review-domain')
 })
 
 function payloadForTestIdentity({

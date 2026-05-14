@@ -16,8 +16,8 @@ import {
   applyBaselineReviewStateToPayload,
   applyReviewScopeToPayload,
   buildSurfaceBaselineReviewState,
-  inferReviewDomainsFromChangedFiles,
   mergeSurfaceBaselineReviewState,
+  resolveChangedFileReviewScope,
 } from './visual-review-baseline.mjs'
 import {
   buildSurfaceReviewState,
@@ -434,10 +434,6 @@ function reviewDomainsForOptions(options) {
 
 function shouldInferReviewDomains(domains) {
   return domains.some((domain) => ['auto', 'changed-files'].includes(domain.toLowerCase()))
-}
-
-function explicitReviewDomains(domains) {
-  return domains.filter((domain) => !['auto', 'changed-files'].includes(domain.toLowerCase()))
 }
 
 async function enrichReportPayload(payload, reportDir, manifestDirs = []) {
@@ -1724,24 +1720,26 @@ async function publishReport(options) {
     surface,
   })
   const configuredReviewDomains = reviewDomainsForOptions(options)
-  let activeReviewDomains = explicitReviewDomains(configuredReviewDomains)
+  let reviewScope = {
+    domains: configuredReviewDomains,
+    emptyScopeReason: '',
+  }
   if (shouldInferReviewDomains(configuredReviewDomains)) {
     const changedFiles = await readPullRequestFiles({
       repository,
       prNumber,
       token: process.env.GITHUB_TOKEN,
     })
-    activeReviewDomains = uniqueStrings([
-      ...activeReviewDomains,
-      ...inferReviewDomainsFromChangedFiles({
-        changedFiles,
-        payload: baselineFilteredPayload,
-      }),
-    ])
+    reviewScope = resolveChangedFileReviewScope({
+      changedFiles,
+      configuredReviewDomains,
+      payload: baselineFilteredPayload,
+    })
   }
   const reviewScopedPayload = applyReviewScopeToPayload({
+    emptyScopeReason: reviewScope.emptyScopeReason,
     payload: baselineFilteredPayload,
-    reviewDomains: activeReviewDomains,
+    reviewDomains: reviewScope.domains,
   })
   const reportForPages = {
     ...extractedReport,
