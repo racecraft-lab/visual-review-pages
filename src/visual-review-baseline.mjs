@@ -9,6 +9,7 @@ export const VISUAL_REVIEW_BASELINE_SCHEMA = 'visual-review-pages.visual-baselin
 const BASELINE_REVIEWABLE_VARIANTS = ['changed', 'new']
 const BASELINE_REPORT_ACTUAL_DIR = '__reg__/1_actual'
 const BASELINE_VISUAL_DIFF_THRESHOLD = 0
+const CHANGED_FILE_REVIEW_DOMAIN_TOKENS = new Set(['auto', 'changed-files'])
 
 export async function buildSurfaceBaselineReviewState({
   context = {},
@@ -195,11 +196,12 @@ export async function applyBaselineReviewStateToPayload({
 }
 
 export function applyReviewScopeToPayload({
+  emptyScopeReason = '',
   payload,
   reviewDomains = [],
 }) {
   const domains = normalizeReviewDomains(reviewDomains)
-  if (domains.length === 0) return payload
+  if (domains.length === 0 && !emptyScopeReason) return payload
 
   const domainSet = new Set(domains)
   const reviewScopeFilteredItems = []
@@ -234,8 +236,37 @@ export function applyReviewScopeToPayload({
     reviewScope: {
       domains,
       filtered: reviewScopeFilteredItems.length,
+      ...(emptyScopeReason ? { reason: emptyScopeReason } : {}),
     },
     reviewScopeFilteredItems,
+  }
+}
+
+export function resolveChangedFileReviewScope({
+  changedFiles = [],
+  configuredReviewDomains = [],
+  payload,
+}) {
+  const configuredDomains = normalizeReviewDomains(configuredReviewDomains)
+  const shouldInferFromChangedFiles = configuredDomains.some(isChangedFileReviewDomain)
+  const explicitDomains = configuredDomains.filter((domain) => !isChangedFileReviewDomain(domain))
+  if (!shouldInferFromChangedFiles) {
+    return { domains: explicitDomains, emptyScopeReason: '' }
+  }
+
+  const normalizedChangedFiles = Array.isArray(changedFiles)
+    ? changedFiles.map(normalizeRepoPath).filter(Boolean)
+    : []
+  const inferredDomains = inferReviewDomainsFromChangedFiles({
+    changedFiles: normalizedChangedFiles,
+    payload,
+  })
+  const domains = uniqueStrings([...explicitDomains, ...inferredDomains])
+  return {
+    domains,
+    emptyScopeReason: domains.length === 0 && normalizedChangedFiles.length > 0
+      ? 'changed-files-no-review-domain'
+      : '',
   }
 }
 
@@ -596,6 +627,10 @@ function normalizeReviewDomains(values) {
 
 function normalizeReviewDomain(value) {
   return String(value || '').trim().toLowerCase()
+}
+
+function isChangedFileReviewDomain(value) {
+  return CHANGED_FILE_REVIEW_DOMAIN_TOKENS.has(normalizeReviewDomain(value))
 }
 
 function normalizeDomainToken(value) {
