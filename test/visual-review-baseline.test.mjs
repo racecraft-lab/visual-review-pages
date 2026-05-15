@@ -131,6 +131,7 @@ test('changed-file auto scope filters all reviewable items when no visual domain
   assert.equal(scoped.reviewScope.filtered, 3)
   assert.deepEqual(scoped.reviewScope.domains, [])
   assert.equal(scoped.reviewScope.reason, 'changed-files-no-review-domain')
+  assert.equal(Object.hasOwn(scoped, 'reviewScopeFilteredItems'), false)
 })
 
 function payloadForTestIdentity({

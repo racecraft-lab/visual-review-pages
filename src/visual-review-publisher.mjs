@@ -1352,13 +1352,20 @@ function latestMapForReports(reports, baseUrl, prNumber) {
       latest[report.surface] = {
         runId: report.runId,
         runUrl: report.runUrl,
-        latestHref: `${baseUrl}/pr/${prNumber}/${report.surface}/latest/`,
+        latestHref: versionedHref(`${baseUrl}/pr/${prNumber}/${report.surface}/latest/`, report.runKey),
         reportHref: report.reportHref,
         updatedAt: report.createdAt,
       }
     }
   }
   return latest
+}
+
+function versionedHref(href, version) {
+  const value = String(version || '').trim()
+  if (!value) return href
+  const separator = href.includes('?') ? '&' : '?'
+  return `${href}${separator}v=${encodeURIComponent(value)}`
 }
 
 async function githubRequest(pathname, options = {}) {
@@ -1561,6 +1568,7 @@ async function publishReport(options) {
     const latestReportDir = path.join(pagesDir, surface, 'latest')
     const reportHref = `${baseUrl}/${surface}/${reportKey}/`
     const latestHref = `${baseUrl}/${surface}/latest/`
+    const latestReviewHref = versionedHref(latestHref, runKey)
     const manifestDirs = manifestDirsForOptions(options)
     const reviewContext = {
       repository,
@@ -1633,7 +1641,7 @@ async function publishReport(options) {
         runUrl,
         reportKey,
         reportHref,
-        latestHref,
+        latestHref: latestReviewHref,
         headSha,
         headRef,
         baseRef,
@@ -1748,6 +1756,7 @@ async function publishReport(options) {
   const baselineApprovedCount = reportItems(reviewScopedPayload, 'baselineApprovedItems').length
   const reportHref = `${baseUrl}/pr/${prNumber}/runs/${runKey}/${surface}/`
   const latestHref = `${baseUrl}/pr/${prNumber}/${surface}/latest/`
+  const latestReviewHref = versionedHref(latestHref, runKey)
   const reviewContext = {
     repository,
     baseUrl,
@@ -1825,7 +1834,7 @@ async function publishReport(options) {
       runKey,
       runUrl,
       reportHref,
-      latestHref,
+      latestHref: latestReviewHref,
       headSha,
       headRef,
       baseRef,
@@ -1882,7 +1891,7 @@ async function publishReport(options) {
     const comment = await publishManagedReviewComment({
       context: {
         ...reviewContext,
-        reportHref: latestHref,
+        reportHref: latestReviewHref,
       },
       payload: reviewScopedPayload,
     })
