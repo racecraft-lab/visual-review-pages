@@ -26,6 +26,7 @@ import {
   parseReviewCommentBody,
   renderReviewComment,
   VISUAL_REVIEW_COMMENT_MARKER,
+  VISUAL_REVIEW_SCHEMA,
 } from './visual-review-state.mjs'
 import {
   resolveInitialReviewStateSource,
@@ -41,6 +42,8 @@ const DEFAULT_SURFACES = {
     workflowFile: 'visual-storybook.yml',
   },
 }
+
+const VISUAL_REVIEW_REPORT_SCHEMA = 'visual-review-pages.visual-review-report.v1'
 
 function parseArgs(argv) {
   const args = {}
@@ -595,6 +598,76 @@ function requiredAssetFiles(payload) {
   }
 }
 
+function reviewItemCounts(payload) {
+  const changed = reportItems(payload, 'failedItems').length
+  const created = reportItems(payload, 'newItems').length
+  const deleted = reportItems(payload, 'deletedItems').length
+  const passed = reportItems(payload, 'passedItems').length
+  const baselineApproved = reportItems(payload, 'baselineApprovedItems').length
+
+  return {
+    baselineApproved,
+    changed,
+    deleted,
+    new: created,
+    open: changed + created + deleted,
+    passed,
+    total: changed + created + deleted + passed,
+  }
+}
+
+function canonicalReviewStateItem(item) {
+  const itemId = itemFileName(item) || String(item?.id || '')
+  return {
+    group: String(item?.group || 'ungrouped'),
+    id: String(item?.id || itemId),
+    itemId,
+    snapshot: String(item?.raw || item?.encoded || itemId),
+    variant: String(item?.variant || ''),
+  }
+}
+
+function buildVisualReviewReportRecord({ context, payload }) {
+  const canonicalReviewItems = reviewStateItems(payload).map(canonicalReviewStateItem)
+  return {
+    schema: VISUAL_REVIEW_REPORT_SCHEMA,
+    version: 1,
+    repository: context.repository,
+    reportMode: context.reportMode || (context.prNumber ? 'pr' : 'main'),
+    reportScope: context.reportScope || '',
+    surface: context.surface,
+    surfaceLabel: context.surfaceLabel,
+    workflowName: context.workflowName,
+    workflowFile: context.workflowFile,
+    prNumber: String(context.prNumber || ''),
+    prUrl: context.prUrl || '',
+    runId: String(context.runId || ''),
+    runAttempt: String(context.runAttempt || ''),
+    runKey: String(context.runKey || ''),
+    runUrl: context.runUrl || '',
+    headRef: context.headRef || '',
+    baseRef: context.baseRef || '',
+    headSha: context.headSha || '',
+    reportHref: context.reportHref || '',
+    latestHref: context.latestHref || context.reportHref || '',
+    createdAt: context.createdAt,
+    itemCounts: reviewItemCounts(payload),
+    reviewScope: payload.reviewScope || context.reviewScope || null,
+    sourcePullRequest: context.sourcePullRequest || null,
+    initialReviewState: context.initialReviewState || null,
+    canonicalReviewState: {
+      schema: VISUAL_REVIEW_SCHEMA,
+      repository: context.repository,
+      prNumber: String(context.prNumber || ''),
+      surface: context.surface,
+      surfaceLabel: context.surfaceLabel,
+      headSha: context.headSha || '',
+      runKey: String(context.runKey || ''),
+      items: canonicalReviewItems,
+    },
+  }
+}
+
 function resolveInside(rootDir, relativePath) {
   const root = path.resolve(rootDir)
   const resolved = path.resolve(root, relativePath)
@@ -695,13 +768,21 @@ async function writeReportBundle({ reportFile, reportHtml, extracted, targetDir,
     path.join(targetDir, 'annotate.html'),
     await readFile(rootAssetUrl('annotate.html'), 'utf8')
   )
+  const localizedPayload = localizedReportPayload(enrichedPayload)
   await writeFile(
     path.join(targetDir, 'index.html'),
     generateVisualReviewAppIndex({
       assetVersion,
       context,
-      payload: localizedReportPayload(enrichedPayload),
+      payload: localizedPayload,
     })
+  )
+  await writeFile(
+    path.join(targetDir, 'visual-review-report.json'),
+    `${JSON.stringify(buildVisualReviewReportRecord({
+      context,
+      payload: localizedPayload,
+    }), null, 2)}\n`
   )
 }
 
@@ -1570,6 +1651,7 @@ async function publishReport(options) {
     const latestHref = `${baseUrl}/${surface}/latest/`
     const latestReviewHref = versionedHref(latestHref, runKey)
     const manifestDirs = manifestDirsForOptions(options)
+    const artifactDir = options['artifact-dir'] ? path.resolve(options['artifact-dir']) : ''
     const reviewContext = {
       repository,
       baseUrl,
@@ -1581,6 +1663,7 @@ async function publishReport(options) {
       initialReviewStateAuthor: initialReviewState?.author || '',
       initialReviewStateCommentId: initialReviewState?.commentId || null,
       reportMode: 'main',
+      latestHref: latestReviewHref,
       sourcePullRequest,
       surface,
       surfaceLabel: surfaceInfo.label,
@@ -1688,8 +1771,24 @@ async function publishReport(options) {
 
       await writeFile(path.join(pagesDir, 'index.html'), generateMainIndex(meta, baseUrl, projectName))
     }
+    const writeMainArtifact = async () => {
+      if (!artifactDir) return
+      await writeReportBundle({
+        reportFile,
+        reportHtml,
+        extracted: extractedReport,
+        targetDir: artifactDir,
+        manifestDirs,
+        context: {
+          ...reviewContext,
+          reportHref,
+          reportScope: 'artifact',
+        },
+      })
+    }
 
     await writeMainPages()
+    await writeMainArtifact()
 
     if (!options['pages-dir']) {
       const addPaths = [surface, 'visual-main-runs.json', 'index.html']
@@ -1718,6 +1817,7 @@ async function publishReport(options) {
   const extractedReport = extractReportPayload(reportHtml)
   const reportDir = path.dirname(reportFile)
   const manifestDirs = manifestDirsForOptions(options)
+  const artifactDir = options['artifact-dir'] ? path.resolve(options['artifact-dir']) : ''
   const baselineState = await readJsonIfPresent(path.join(pagesDir, 'visual-baseline-state.json'), null)
   const baselineCandidatePayload = await enrichReportPayload(extractedReport.payload, reportDir, manifestDirs)
   const baselineFilteredPayload = await applyBaselineReviewStateToPayload({
@@ -1764,6 +1864,8 @@ async function publishReport(options) {
     prTitle: prPayload.title || `PR #${prNumber}`,
     prUrl,
     prIndexHref: `${baseUrl}/pr/${prNumber}/`,
+    reportMode: 'pr',
+    latestHref: latestReviewHref,
     surface,
     surfaceLabel: surfaceInfo.label,
     workflowName,
@@ -1874,8 +1976,24 @@ async function publishReport(options) {
     await writeFile(registryPath, `${JSON.stringify(registry, null, 2)}\n`)
     await writeFile(path.join(pagesDir, 'pr', 'index.html'), generateRegistryIndex(registry, baseUrl, projectName))
   }
+  const writePrArtifact = async () => {
+    if (!artifactDir) return
+    await writeReportBundle({
+      reportFile,
+      reportHtml,
+      extracted: reportForPages,
+      targetDir: artifactDir,
+      manifestDirs,
+      context: {
+        ...reviewContext,
+        reportHref,
+        reportScope: 'artifact',
+      },
+    })
+  }
 
   await writePrPages()
+  await writePrArtifact()
 
   if (!options['pages-dir']) {
     await publishPagesChanges({

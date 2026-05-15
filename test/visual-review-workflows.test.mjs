@@ -28,6 +28,35 @@ test('report workflow is reusable and publishes through the packaged CLI', () =>
   assert.match(workflow, /pull-requests: write/)
 })
 
+test('report workflow uploads caller-owned canonical review artifacts', () => {
+  const workflow = read('.github/workflows/visual-review-report.yml')
+
+  assert.match(workflow, /review_artifact_name:/)
+  assert.match(workflow, /review_artifact_retention_days:/)
+  assert.match(workflow, /repo\/\.visual-review-pages\/\$\{\{ inputs\.surface \}\}/)
+  assert.match(workflow, /--artifact-dir/)
+  assert.match(workflow, /Upload canonical visual review artifact/)
+  assert.match(workflow, /id: upload-review-artifact/)
+  assert.match(workflow, /uses: actions\/upload-artifact@v7/)
+  assert.match(workflow, /name: \$\{\{ steps\.review-artifact-name\.outputs\.name \}\}/)
+  assert.match(workflow, /retention-days: \$\{\{ inputs\.review_artifact_retention_days \}\}/)
+  assert.match(workflow, /steps\.upload-review-artifact\.outputs\.artifact-url/)
+  assert.match(workflow, /steps\.upload-review-artifact\.outputs\.artifact-digest/)
+})
+
+test('report workflow limits GitHub cache usage to package dependencies', () => {
+  const workflow = read('.github/workflows/visual-review-report.yml')
+
+  assert.match(workflow, /enable_dependency_cache:/)
+  assert.match(workflow, /Setup Node with pnpm cache/)
+  assert.match(workflow, /cache: pnpm/)
+  assert.match(workflow, /cache-dependency-path: repo\/pnpm-lock\.yaml/)
+  assert.match(workflow, /Setup Node with npm cache/)
+  assert.match(workflow, /cache: npm/)
+  assert.match(workflow, /cache-dependency-path: repo\/package-lock\.json/)
+  assert.doesNotMatch(workflow, /actions\/cache/)
+})
+
 test('approval workflow is reusable and delegates to the packaged approval CLI', () => {
   const workflow = read('.github/workflows/visual-review-approval.yml')
 

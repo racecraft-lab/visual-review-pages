@@ -100,6 +100,7 @@ jobs:
       artifact_paths: |
         repo/test-results/
         repo/playwright-report/
+      review_artifact_retention_days: 30
       workflow_file: visual-playwright.yml
       pages_branch: visual-regression-pages
       base_url: https://example-org.github.io/example-product
@@ -124,9 +125,24 @@ reuses an approved screenshot filename and produces identical image bytes. Set
 changed files, or pass a comma-separated list such as `workflow-contracts`.
 Set `suppress_reg_viz_comments: true` when the managed visual review comment
 should be the only PR timeline report; raw reg-viz output is still linked from
-the generated Pages report and workflow summary. Set `artifact_paths` to the caller repo's generated
-evidence paths, prefixed with `repo/` because the reusable workflow checks the
-product repository out into that subdirectory.
+the generated Pages report and workflow summary. The workflow also uploads a
+caller-owned canonical visual review artifact named
+`visual-review-pr-<number>-<surface>-<run>-attempt-<attempt>` for pull requests
+or `visual-review-main-<surface>-<run>-attempt-<attempt>` for main. That
+artifact contains the generated review app bundle plus
+`visual-review-report.json`, which records the repo, PR, head SHA, run key,
+scoped item counts, review scope, report links, and canonical review-state items
+for that run. Set `review_artifact_name` to override the generated name and
+`review_artifact_retention_days` to control retention within the caller repo's
+GitHub Actions retention limits. Set `artifact_paths` to the caller repo's
+generated evidence paths, prefixed with `repo/` because the reusable workflow
+checks the product repository out into that subdirectory.
+
+The reusable workflow uses GitHub cache only through `actions/setup-node` for npm
+or pnpm dependency installs when the matching lockfile exists. Visual review
+reports, screenshots, baseline state, and `visual-review-report.json` are never
+restored from cache; they are published to the caller repo's Pages branch and
+uploaded as GitHub Actions artifacts.
 
 ### Approval status workflow
 
