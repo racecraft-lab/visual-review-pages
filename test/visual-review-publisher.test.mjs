@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { createServer } from 'node:http'
 import {
   existsSync,
   mkdirSync,
@@ -28,6 +29,27 @@ function appAssetVersion(repoRoot, runKey) {
     hash.update('\0')
   }
   return `${runKey}-${hash.digest('hex').slice(0, 12)}`
+}
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject)
+      resolve(server.address())
+    })
+  })
+}
+
+function spawnNode(args, options = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, args, options)
+    let stdout = ''
+    let stderr = ''
+    child.stdout?.on('data', (chunk) => { stdout += chunk })
+    child.stderr?.on('data', (chunk) => { stderr += chunk })
+    child.on('close', (status) => resolve({ status, stdout, stderr }))
+  })
 }
 
 test('publisher CLI creates a reusable PR visual report bundle with annotation assets', () => {
@@ -413,6 +435,136 @@ test('publisher CLI can scope reviewable PR items by visual metadata domain', ()
     assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', filteredSnapshot)), false)
     assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', filteredPassedSnapshot)), false)
   } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('publisher CLI omits auto-scoped report items when changed files match no visual domains', async () => {
+  const repoRoot = process.cwd()
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), 'visual-review-publisher-auto-scope-'))
+  const reportDir = path.join(tempDir, 'visual-report')
+  const actualDir = path.join(reportDir, '__reg__', '1_actual')
+  const pagesDir = path.join(tempDir, 'pages')
+  const filteredSnapshot = 'spec-008/budget-default.png'
+  const filteredOtherSnapshot = 'workflow-contracts/contracts-diagnostics.png'
+
+  const api = createServer((request, response) => {
+    if (request.url === '/repos/example/reusable-product/pulls/12/files?per_page=100&page=1') {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify([
+        { filename: 'src/app/api/github/route.ts' },
+        { filename: 'src/app/api/github/sync/route.ts' },
+      ]))
+      return
+    }
+
+    response.writeHead(404, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ message: 'not found' }))
+  })
+  const address = await listen(api)
+
+  try {
+    mkdirSync(path.join(actualDir, 'spec-008'), { recursive: true })
+    mkdirSync(path.join(actualDir, 'workflow-contracts'), { recursive: true })
+    writeFileSync(path.join(actualDir, filteredSnapshot), 'filtered-png')
+    writeFileSync(path.join(actualDir, filteredOtherSnapshot), 'filtered-other-png')
+    writeFileSync(path.join(actualDir, 'spec-008', 'budget-default.visual.json'), `${JSON.stringify({
+      version: 1,
+      kind: 'playwright',
+      domain: 'spec-008',
+      name: 'budget-default',
+      sourceFile: 'tests/e2e/governance-budget.e2e.ts',
+    }, null, 2)}\n`)
+    writeFileSync(path.join(actualDir, 'workflow-contracts', 'contracts-diagnostics.visual.json'), `${JSON.stringify({
+      version: 1,
+      kind: 'playwright',
+      domain: 'workflow-contracts',
+      name: 'contracts-diagnostics',
+      sourceFile: 'tests/e2e/workflow-contract-diagnostics.spec.ts',
+    }, null, 2)}\n`)
+
+    const payload = {
+      actualDir: '__reg__/1_actual',
+      deletedItems: [],
+      diffDir: '__reg__/0_diff',
+      expectedDir: '__reg__/2_expected',
+      failedItems: [],
+      newItems: [
+        { raw: filteredSnapshot, encoded: filteredSnapshot },
+        { raw: filteredOtherSnapshot, encoded: filteredOtherSnapshot },
+      ],
+      passedItems: [],
+    }
+    const reportFile = path.join(reportDir, 'audit.html')
+    writeFileSync(reportFile, `<script>window['__reg__'] = ${JSON.stringify(payload)};</script>`)
+
+    const result = await spawnNode([
+      path.join(repoRoot, 'bin', 'publish-visual-review-pages.mjs'),
+      '--surface',
+      'audit',
+      '--surface-label',
+      'Audit Screens',
+      '--workflow-file',
+      'visual-audit.yml',
+      '--workflow',
+      'Audit Visuals',
+      '--project-name',
+      'Reusable Product',
+      '--report-file',
+      reportFile,
+      '--pages-dir',
+      pagesDir,
+      '--repository',
+      'example/reusable-product',
+      '--pr-number',
+      '12',
+      '--head-ref',
+      'feature/visuals',
+      '--base-ref',
+      'main',
+      '--sha',
+      'abcdef1234567890',
+      '--run-id',
+      '456',
+      '--run-attempt',
+      '1',
+      '--base-url',
+      'https://example.github.io/reusable-product',
+      '--review-domains',
+      'auto',
+    ], {
+      cwd: tempDir,
+      env: {
+        ...process.env,
+        GITHUB_API_URL: `http://${address.address}:${address.port}`,
+        GITHUB_SHA: 'abcdef1234567890',
+        GITHUB_TOKEN: 'test-token',
+      },
+    })
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+
+    const latestDir = path.join(pagesDir, 'pr', '12', 'audit', 'latest')
+    const latestHtml = readFileSync(path.join(latestDir, 'index.html'), 'utf8')
+    const reviewData = extractReviewData(latestHtml)
+
+    assert.deepEqual(reviewData.payload.newItems, [])
+    assert.deepEqual(reviewData.payload.failedItems, [])
+    assert.deepEqual(reviewData.payload.deletedItems, [])
+    assert.deepEqual(reviewData.payload.passedItems, [])
+    assert.equal(reviewData.payload.reviewScope.filtered, 2)
+    assert.deepEqual(reviewData.payload.reviewScope.domains, [])
+    assert.equal(reviewData.payload.reviewScope.reason, 'changed-files-no-review-domain')
+    assert.equal(Object.hasOwn(reviewData.payload, 'reviewScopeFilteredItems'), false)
+    assert.equal(latestHtml.includes(filteredSnapshot), false)
+    assert.equal(latestHtml.includes(filteredOtherSnapshot), false)
+    assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', filteredSnapshot)), false)
+    assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', filteredOtherSnapshot)), false)
+
+    const prIndex = readFileSync(path.join(pagesDir, 'pr', '12', 'index.html'), 'utf8')
+    assert.match(prIndex, /href="https:\/\/example\.github\.io\/reusable-product\/pr\/12\/audit\/latest\/\?v=456-attempt-1"/)
+  } finally {
+    api.close()
     rmSync(tempDir, { recursive: true, force: true })
   }
 })

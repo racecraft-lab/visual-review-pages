@@ -204,24 +204,24 @@ export function applyReviewScopeToPayload({
   if (domains.length === 0 && !emptyScopeReason) return payload
 
   const domainSet = new Set(domains)
-  const reviewScopeFilteredItems = []
-  const scopeItems = (items, variant) => {
+  let filteredCount = 0
+  const scopeItems = (items) => {
     const scoped = []
     for (const item of reportItems(payload, items)) {
       if (itemMatchesReviewDomain(item, domainSet)) {
         scoped.push(item)
       } else {
-        reviewScopeFilteredItems.push({ ...item, reviewScopeVariant: variant })
+        filteredCount += 1
       }
     }
     return scoped
   }
 
-  const failedItems = scopeItems('failedItems', 'changed')
-  const newItems = scopeItems('newItems', 'new')
-  const deletedItems = scopeItems('deletedItems', 'deleted')
-  const passedItems = scopeItems('passedItems', 'passed')
-  const baselineApprovedItems = scopeItems('baselineApprovedItems', 'baseline-approved')
+  const failedItems = scopeItems('failedItems')
+  const newItems = scopeItems('newItems')
+  const deletedItems = scopeItems('deletedItems')
+  const passedItems = scopeItems('passedItems')
+  const baselineApprovedItems = scopeItems('baselineApprovedItems')
 
   return {
     ...payload,
@@ -235,10 +235,9 @@ export function applyReviewScopeToPayload({
     passedItems,
     reviewScope: {
       domains,
-      filtered: reviewScopeFilteredItems.length,
+      filtered: filteredCount,
       ...(emptyScopeReason ? { reason: emptyScopeReason } : {}),
     },
-    reviewScopeFilteredItems,
   }
 }
 
