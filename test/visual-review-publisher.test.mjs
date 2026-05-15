@@ -58,6 +58,7 @@ test('publisher CLI creates a reusable PR visual report bundle with annotation a
   const reportDir = path.join(tempDir, 'visual-report')
   const actualDir = path.join(reportDir, '__reg__', '1_actual')
   const pagesDir = path.join(tempDir, 'pages')
+  const artifactDir = path.join(tempDir, 'caller-artifacts', 'visual-review-audit')
   const snapshot = 'audit-widget--default.png'
 
   try {
@@ -107,6 +108,8 @@ test('publisher CLI creates a reusable PR visual report bundle with annotation a
       '1',
       '--base-url',
       'https://example.github.io/reusable-product',
+      '--artifact-dir',
+      artifactDir,
     ], {
       cwd: tempDir,
       encoding: 'utf8',
@@ -141,6 +144,33 @@ test('publisher CLI creates a reusable PR visual report bundle with annotation a
     assert.equal(existsSync(path.join(latestDir, 'annotate.html')), true)
     assert.equal(existsSync(path.join(latestDir, '__reg__', '1_actual', snapshot)), true)
     assert.match(readFileSync(path.join(latestDir, 'visual-review-app.js'), 'utf8'), /annotationPageHref\(\{ asset: 'current'/)
+    const latestRecord = JSON.parse(readFileSync(path.join(latestDir, 'visual-review-report.json'), 'utf8'))
+    assert.equal(latestRecord.schema, 'visual-review-pages.visual-review-report.v1')
+    assert.equal(latestRecord.repository, 'example/reusable-product')
+    assert.equal(latestRecord.reportMode, 'pr')
+    assert.equal(latestRecord.reportScope, 'latest')
+    assert.equal(latestRecord.prNumber, '12')
+    assert.equal(latestRecord.surface, 'audit')
+    assert.equal(latestRecord.runKey, '456-attempt-1')
+    assert.equal(latestRecord.headSha, 'abcdef1234567890')
+    assert.equal(latestRecord.itemCounts.new, 1)
+    assert.equal(latestRecord.itemCounts.open, 1)
+    assert.equal(latestRecord.itemCounts.total, 1)
+    assert.equal(latestRecord.canonicalReviewState.items.length, 1)
+    assert.equal(latestRecord.canonicalReviewState.items[0].itemId, snapshot)
+    assert.equal(latestRecord.canonicalReviewState.items[0].variant, 'new')
+
+    assert.equal(existsSync(path.join(artifactDir, 'index.html')), true)
+    assert.equal(existsSync(path.join(artifactDir, 'reg-viz.html')), true)
+    assert.equal(existsSync(path.join(artifactDir, '__reg__', '1_actual', snapshot)), true)
+    const artifactRecord = JSON.parse(readFileSync(path.join(artifactDir, 'visual-review-report.json'), 'utf8'))
+    assert.equal(artifactRecord.schema, 'visual-review-pages.visual-review-report.v1')
+    assert.equal(artifactRecord.repository, 'example/reusable-product')
+    assert.equal(artifactRecord.reportMode, 'pr')
+    assert.equal(artifactRecord.reportScope, 'artifact')
+    assert.equal(artifactRecord.reportHref, 'https://example.github.io/reusable-product/pr/12/runs/456-attempt-1/audit/')
+    assert.equal(artifactRecord.latestHref, 'https://example.github.io/reusable-product/pr/12/audit/latest/?v=456-attempt-1')
+    assert.equal(artifactRecord.itemCounts.open, 1)
 
     const prIndex = readFileSync(path.join(pagesDir, 'pr', '12', 'index.html'), 'utf8')
     assert.match(prIndex, /Reusable Product visual reviews/)

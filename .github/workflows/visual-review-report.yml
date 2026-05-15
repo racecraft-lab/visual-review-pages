@@ -47,11 +47,36 @@ on:
           repo/test-results/
           repo/playwright-report/
         type: string
+      artifact_retention_days:
+        description: Retention period for caller-provided raw visual evidence artifacts.
+        required: false
+        default: 14
+        type: number
+      review_artifact_name:
+        description: Optional artifact name for the canonical visual review report bundle. Defaults to a repo-owned run-specific name.
+        required: false
+        default: ''
+        type: string
+      review_artifact_retention_days:
+        description: Retention period for the canonical visual review report artifact.
+        required: false
+        default: 30
+        type: number
+      upload_review_artifact:
+        description: Upload the canonical visual review bundle and visual-review-report.json to the caller repository's workflow artifacts.
+        required: false
+        default: true
+        type: boolean
       install_command:
         description: Dependency install command run from the caller repo.
         required: false
         default: pnpm install --frozen-lockfile
         type: string
+      enable_dependency_cache:
+        description: Enable setup-node dependency caching for npm or pnpm installs. Visual review reports are never restored from cache.
+        required: false
+        default: true
+        type: boolean
       package_manager:
         description: Package manager setup to apply. Supported values are pnpm, npm, or none.
         required: false
@@ -157,7 +182,24 @@ jobs:
         with:
           version: ${{ inputs.pnpm_version }}
 
+      - name: Setup Node with pnpm cache
+        if: ${{ inputs.enable_dependency_cache && inputs.package_manager == 'pnpm' && hashFiles('repo/pnpm-lock.yaml') != '' }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: pnpm
+          cache-dependency-path: repo/pnpm-lock.yaml
+
+      - name: Setup Node with npm cache
+        if: ${{ inputs.enable_dependency_cache && inputs.package_manager == 'npm' && hashFiles('repo/package-lock.json') != '' }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+          cache-dependency-path: repo/package-lock.json
+
       - name: Setup Node
+        if: ${{ !inputs.enable_dependency_cache || (inputs.package_manager != 'pnpm' && inputs.package_manager != 'npm') || (inputs.package_manager == 'pnpm' && hashFiles('repo/pnpm-lock.yaml') == '') || (inputs.package_manager == 'npm' && hashFiles('repo/package-lock.json') == '') }}
         uses: actions/setup-node@v6
         with:
           node-version: ${{ inputs.node_version }}
@@ -204,6 +246,26 @@ jobs:
           fi
 
           echo "base_url=$base_url" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve review artifact name
+        id: review-artifact-name
+        env:
+          INPUT_REVIEW_ARTIFACT_NAME: ${{ inputs.review_artifact_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          SURFACE: ${{ inputs.surface }}
+        run: |
+          if [ -n "$INPUT_REVIEW_ARTIFACT_NAME" ]; then
+            name="$INPUT_REVIEW_ARTIFACT_NAME"
+          elif [ -n "$PR_NUMBER" ]; then
+            name="visual-review-pr-${PR_NUMBER}-${SURFACE}-${RUN_ID}-attempt-${RUN_ATTEMPT}"
+          else
+            name="visual-review-main-${SURFACE}-${RUN_ID}-attempt-${RUN_ATTEMPT}"
+          fi
+
+          safe_name="$(printf '%s' "$name" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-//; s/-$//')"
+          echo "name=$safe_name" >> "$GITHUB_OUTPUT"
 
       - name: Expose caller git metadata to workspace root
         if: steps.visual.outcome == 'success' && (steps.manifest.outcome == 'success' || steps.manifest.outcome == 'skipped')
@@ -252,6 +314,7 @@ jobs:
           VISUAL_REVIEW_PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
           VISUAL_REVIEW_MANIFEST_DIR: ${{ inputs.manifest_dir }}
           VISUAL_REVIEW_PROJECT_NAME: ${{ inputs.project_name }}
+          VISUAL_REVIEW_ARTIFACT_DIR: repo/.visual-review-pages/${{ inputs.surface }}
         run: |
           args=(
             --surface "${{ inputs.surface }}"
@@ -260,6 +323,7 @@ jobs:
             --project-name "${{ inputs.project_name }}"
             --report-file "repo/${{ inputs.report_file_path }}"
             --repository "${{ github.repository }}"
+            --artifact-dir "$VISUAL_REVIEW_ARTIFACT_DIR"
           )
 
           if [ -n "$VISUAL_REVIEW_MANIFEST_DIR" ]; then
@@ -282,6 +346,7 @@ jobs:
           VISUAL_REVIEW_PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
           VISUAL_REVIEW_MANIFEST_DIR: ${{ inputs.manifest_dir }}
           VISUAL_REVIEW_PROJECT_NAME: ${{ inputs.project_name }}
+          VISUAL_REVIEW_ARTIFACT_DIR: repo/.visual-review-pages/${{ inputs.surface }}
         run: |
           args=(
             --surface "${{ inputs.surface }}"
@@ -291,6 +356,7 @@ jobs:
             --report-file "repo/${{ inputs.report_file_path }}"
             --repository "${{ github.repository }}"
             --mode main
+            --artifact-dir "$VISUAL_REVIEW_ARTIFACT_DIR"
           )
 
           if [ -n "$VISUAL_REVIEW_MANIFEST_DIR" ]; then
@@ -299,6 +365,26 @@ jobs:
 
           node visual-review-pages/bin/publish-visual-review-pages.mjs "${args[@]}"
 
+      - name: Upload canonical visual review artifact
+        id: upload-review-artifact
+        if: ${{ always() && inputs.upload_review_artifact && steps.visual.outcome == 'success' && (steps.manifest.outcome == 'success' || steps.manifest.outcome == 'skipped') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.review-artifact-name.outputs.name }}
+          path: repo/.visual-review-pages/${{ inputs.surface }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.review_artifact_retention_days }}
+
+      - name: Summarize canonical visual review artifact
+        if: ${{ steps.upload-review-artifact.outputs.artifact-url != '' }}
+        run: |
+          {
+            echo "### Visual review artifact"
+            echo "- Artifact: [${{ steps.review-artifact-name.outputs.name }}](${{ steps.upload-review-artifact.outputs.artifact-url }})"
+            echo "- Digest: \`${{ steps.upload-review-artifact.outputs.artifact-digest }}\`"
+            echo "- Canonical record: \`visual-review-report.json\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload visual artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -306,7 +392,7 @@ jobs:
           name: ${{ format('{0}-evidence', inputs.artifact_name) }}
           path: ${{ inputs.artifact_paths }}
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: ${{ inputs.artifact_retention_days }}
 
       - name: Fail on visual defects
         if: steps.visual.outcome != 'success' || (steps.manifest.outcome != 'success' && steps.manifest.outcome != 'skipped') || steps.visual-regression.outcome == 'failure'
