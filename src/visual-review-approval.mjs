@@ -134,6 +134,19 @@ async function readPullRequestFiles(repository, prNumber) {
   return files
 }
 
+async function readChangedFilesBetween(repository, baseSha, headSha) {
+  if (!baseSha || !headSha || baseSha === headSha) return []
+  const { owner, repo } = splitRepository(repository)
+  const comparison = await githubRequest(
+    `/repos/${owner}/${repo}/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(headSha)}`,
+    { requireToken: true }
+  )
+  if (!Array.isArray(comparison.files)) {
+    throw new Error(`GitHub compare response did not include changed files for ${baseSha}...${headSha}`)
+  }
+  return comparison.files.map((file) => file.filename).filter(Boolean)
+}
+
 async function postStatus({ args, context, result }) {
   if (!args['set-status']) return
   const { owner, repo } = splitRepository(context.repository)
@@ -158,6 +171,32 @@ function truncateStatusDescription(description) {
   return text.length <= 140 ? text : `${text.slice(0, 137)}...`
 }
 
+async function staleApprovalStillCoversCurrentHead({ context, reviewState, requiredSurfaces, visualReviewPatterns }) {
+  const approvalWithoutHeadCheck = validateVisualApproval(reviewState, {
+    prNumber: context.prNumber,
+    repository: context.repository,
+    requiredSurfaces,
+  })
+  if (!approvalWithoutHeadCheck.approved) return false
+
+  const reviewedHeadShas = new Set()
+  for (const surfaceName of requiredSurfaces) {
+    const reviewedHeadSha = reviewState?.surfaces?.[surfaceName]?.headSha
+    if (reviewedHeadSha && reviewedHeadSha !== context.headSha) {
+      reviewedHeadShas.add(reviewedHeadSha)
+    }
+  }
+  if (reviewedHeadShas.size === 0) return false
+
+  for (const reviewedHeadSha of reviewedHeadShas) {
+    const changedFiles = await readChangedFilesBetween(context.repository, reviewedHeadSha, context.headSha)
+    if (visualReviewRequiredForFiles(changedFiles, visualReviewPatterns)) {
+      return false
+    }
+  }
+  return true
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   const context = await resolvePrContext(args)
@@ -166,10 +205,13 @@ async function main() {
     return
   }
 
+  const requiredSurfaces = normalizeRequiredSurfaces(args['required-surfaces'])
+  const visualReviewPaths = normalizeList(args['visual-review-paths'])
+  const visualReviewPatterns = visualReviewPaths.length > 0 ? visualReviewPaths : undefined
+
   if (args['skip-if-no-visual-changes']) {
     const changedFiles = await readPullRequestFiles(context.repository, context.prNumber)
-    const visualReviewPaths = normalizeList(args['visual-review-paths'])
-    if (!visualReviewRequiredForFiles(changedFiles, visualReviewPaths.length > 0 ? visualReviewPaths : undefined)) {
+    if (!visualReviewRequiredForFiles(changedFiles, visualReviewPatterns)) {
       const result = {
         approved: true,
         failures: [],
@@ -184,12 +226,28 @@ async function main() {
   const comments = await readComments(args, context.repository, context.prNumber)
   const comment = findReviewComment(comments)
   const reviewState = comment ? parseReviewCommentBody(comment.body) : null
-  const result = validateVisualApproval(reviewState, {
+  let result = validateVisualApproval(reviewState, {
     headSha: context.headSha,
     prNumber: context.prNumber,
     repository: context.repository,
-    requiredSurfaces: normalizeRequiredSurfaces(args['required-surfaces']),
+    requiredSurfaces,
   })
+
+  if (!result.approved && args['skip-if-no-visual-changes'] && reviewState) {
+    const unchangedSinceApproval = await staleApprovalStillCoversCurrentHead({
+      context,
+      requiredSurfaces,
+      reviewState,
+      visualReviewPatterns,
+    })
+    if (unchangedSinceApproval) {
+      result = {
+        approved: true,
+        failures: [],
+        summary: `Visual review unchanged since last approval for ${requiredSurfaces.join(', ')}`,
+      }
+    }
+  }
 
   await postStatus({ args, context, result })
 
