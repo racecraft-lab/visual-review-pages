@@ -122,6 +122,16 @@ on:
         required: false
         default: main
         type: string
+      refresh_approval_status:
+        description: Refresh the per-surface visual approval commit status after publishing PR visual state.
+        required: false
+        default: true
+        type: boolean
+      approval_context:
+        description: Optional commit status context to refresh after publishing. Defaults to visual-review-approval/SURFACE.
+        required: false
+        default: ''
+        type: string
       review_domains:
         description: Comma-separated review domains to keep in the review queue. Use auto to infer domains from PR changed files.
         required: false
@@ -153,6 +163,7 @@ permissions:
   actions: read
   issues: write
   pull-requests: write
+  statuses: write
 
 jobs:
   visual-review-report:
@@ -307,6 +318,7 @@ jobs:
           retention-days: 30
 
       - name: Publish PR visual report to GitHub Pages
+        id: publish-pr-visual-report
         if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.visual.outcome == 'success' && (steps.manifest.outcome == 'success' || steps.manifest.outcome == 'skipped')
         env:
           GITHUB_TOKEN: ${{ secrets.visual_review_token || github.token }}
@@ -337,6 +349,27 @@ jobs:
           fi
 
           node visual-review-pages/bin/publish-visual-review-pages.mjs "${args[@]}"
+
+      - name: Refresh visual approval status
+        if: always() && inputs.refresh_approval_status && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.publish-pr-visual-report.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ secrets.visual_review_token || github.token }}
+          INPUT_APPROVAL_CONTEXT: ${{ inputs.approval_context }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SURFACE: ${{ inputs.surface }}
+          VISUAL_REVIEW_PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          context="${INPUT_APPROVAL_CONTEXT:-visual-review-approval/$SURFACE}"
+          target_url="${VISUAL_REVIEW_PAGES_BASE_URL}/pr/${PR_NUMBER}/${SURFACE}/latest/?v=${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+
+          node visual-review-pages/bin/check-visual-review-approval.mjs \
+            --repository "${{ github.repository }}" \
+            --pr-number "$PR_NUMBER" \
+            --target-url "$target_url" \
+            --set-status \
+            --context "$context" \
+            --required-surfaces "${{ inputs.surface }}" \
+            --soft-fail
 
       - name: Publish main visual report to GitHub Pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.visual.outcome == 'success' && (steps.manifest.outcome == 'success' || steps.manifest.outcome == 'skipped')
