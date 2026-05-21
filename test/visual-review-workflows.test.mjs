@@ -44,6 +44,19 @@ test('report workflow uploads caller-owned canonical review artifacts', () => {
   assert.match(workflow, /steps\.upload-review-artifact\.outputs\.artifact-digest/)
 })
 
+test('report workflow refreshes per-surface approval status after publishing PR state', () => {
+  const workflow = read('.github/workflows/visual-review-report.yml')
+
+  assert.match(workflow, /refresh_approval_status:/)
+  assert.match(workflow, /approval_context:/)
+  assert.match(workflow, /statuses: write/)
+  assert.match(workflow, /Refresh visual approval status/)
+  assert.match(workflow, /bin\/check-visual-review-approval\.mjs/)
+  assert.match(workflow, /--required-surfaces "\$\{\{ inputs\.surface \}\}"/)
+  assert.match(workflow, /context="\$\{INPUT_APPROVAL_CONTEXT:-visual-review-approval\/\$SURFACE\}"/)
+  assert.match(workflow, /target_url="\$\{VISUAL_REVIEW_PAGES_BASE_URL\}\/pr\/\$\{PR_NUMBER\}\/\$\{SURFACE\}\/latest\/\?v=\$\{GITHUB_RUN_ID\}-attempt-\$\{GITHUB_RUN_ATTEMPT\}"/)
+})
+
 test('report workflow limits GitHub cache usage to package dependencies', () => {
   const workflow = read('.github/workflows/visual-review-report.yml')
 
